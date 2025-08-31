@@ -19,11 +19,12 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import java.text.SimpleDateFormat
 import java.util.*
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 
 class MainActivity : ComponentActivity() {
     private val viewModel: ElectricityViewModel by viewModels {
@@ -38,7 +39,16 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    ElectricityMeterApp(viewModel = viewModel)
+                    val migrationCompleted by viewModel.migrationCompleted.collectAsState(initial = false)
+
+                    if (migrationCompleted) {
+                        ElectricityMeterApp(viewModel = viewModel)
+                    } else {
+                        MigrationScreen(
+                            viewModel = viewModel,
+                            onMigrationComplete = { }
+                        )
+                    }
                 }
             }
         }
@@ -46,6 +56,7 @@ class MainActivity : ComponentActivity() {
 }
 
 class ElectricityViewModelFactory(private val context: Context) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(ElectricityViewModel::class.java)) {
             return ElectricityViewModel(context) as T
@@ -61,6 +72,8 @@ class ElectricityViewModel(context: Context) : ViewModel() {
 
     var previousReading by mutableStateOf(0.0)
         private set
+
+    val migrationCompleted: Flow<Boolean> = dataStoreManager.migrationCompleted
 
     init {
         loadData()
@@ -107,7 +120,18 @@ class ElectricityViewModel(context: Context) : ViewModel() {
             }
         }
     }
+
+    suspend fun migrateOldData(records: List<ElectricityRecord>) {
+        dataStoreManager.migrateRecords(records)
+        dataStoreManager.saveMigrationCompleted(true) // сохраняем флаг
+        loadData() // Перезагружаем данные
+    }
+
+    suspend fun skipMigration() {
+        dataStoreManager.saveMigrationCompleted(true) // пропускаем миграцию
+    }
 }
+
 
 @Composable
 fun ElectricityMeterApp(viewModel: ElectricityViewModel) {
@@ -300,4 +324,140 @@ fun GarageElectricityMeter2Theme(
     MaterialTheme(
         content = content
     )
+}
+
+
+
+@Composable
+fun MigrationScreen(
+    viewModel: ElectricityViewModel,
+    onMigrationComplete: () -> Unit
+) {
+    val coroutineScope = rememberCoroutineScope()
+    var migrationStatus by remember { mutableStateOf("Готов к миграции") }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            "Миграция старых данных",
+            style = MaterialTheme.typography.headlineMedium
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Text(migrationStatus)
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        Button(
+            onClick = {
+                coroutineScope.launch {
+                    migrationStatus = "Миграция..."
+                    try {
+                        val records = parseOldData()
+                        viewModel.migrateOldData(records)
+                        migrationStatus = "Миграция завершена успешно!"
+                        delay(1000)
+                    } catch (e: Exception) {
+                        migrationStatus = "Ошибка: ${e.message}"
+                    }
+                }
+            }
+        ) {
+            Text("Начать миграцию")
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Button(
+            onClick = {
+                coroutineScope.launch {
+                    viewModel.skipMigration()
+                }
+            }
+        ) {
+            Text("Пропустить миграцию")
+        }
+    }
+}
+
+// Функция для парсинга ваших старых данных
+fun parseOldData(): List<ElectricityRecord> {
+    val rawData = """
+        14.10.23 - 223 1кВт - 4₽
+        15.11.23 - 917
+        16.12.23- 1875
+        15.01.24-2951
+        16.02.24-4028
+        14.03.24-4860
+        15.04.24-5674
+        15.05.24-61534
+        14.06.24-6403
+        16.07.24-6428
+        14.08.24-6444
+        16.09.24-6576
+        15.10.24-7027 1кВт - 5₽
+        15.11.24 - 7839
+        14.12.24-8818
+        15.01.25-9861
+        15.02.25-10861
+        14.03.25 - 11696
+        14.04.25 - 12418
+        16.05.25 - 12792
+        15.06.25 - 12953
+        15.07.25 - 12977
+        16.08.25 - 13006
+    """.trimIndent()
+
+    val records = mutableListOf<ElectricityRecord>()
+    val lines = rawData.split("\n")
+    var previousReading = 0.0
+    var currentTariff = 5.0 // текущий тариф
+
+    for (line in lines) {
+        try {
+            // Парсим дату и показания
+            val parts = line.split("-", " ")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && it.toDoubleOrNull() != null }
+
+            if (parts.size >= 2) {
+                val date = parts[0]
+                val currentReading = parts[1].toDouble()
+
+                // Определяем тариф (если указан в строке)
+                if (line.contains("1кВт")) {
+                    val tariffMatch = Regex("""(\d+)₽""").find(line)
+                    tariffMatch?.groupValues?.get(1)?.toDouble()?.let {
+                        currentTariff = it
+                    }
+                }
+
+                val consumption = if (previousReading > 0) currentReading - previousReading else 0.0
+                val cost = consumption * currentTariff
+
+                records.add(
+                    ElectricityRecord(
+                        id = UUID.randomUUID().toString(),
+                        date = date,
+                        previousReading = previousReading,
+                        currentReading = currentReading,
+                        consumption = consumption,
+                        cost = cost
+                    )
+                )
+
+                previousReading = currentReading
+            }
+        } catch (e: Exception) {
+            // Пропускаем некорректные строки
+            continue
+        }
+    }
+
+    return records
 }

@@ -17,6 +17,7 @@ class DataStoreManager(private val context: Context) {
     private object PreferencesKeys {
         val PREVIOUS_READING = doublePreferencesKey("previous_reading")
         val RECORDS_COUNT = intPreferencesKey("records_count")
+        val MIGRATION_COMPLETED = booleanPreferencesKey("migration_completed")
     }
 
     // Сохраняем предыдущие показания
@@ -30,6 +31,19 @@ class DataStoreManager(private val context: Context) {
     val previousReading: Flow<Double> = context.dataStore.data
         .map { preferences ->
             preferences[PreferencesKeys.PREVIOUS_READING] ?: 0.0
+        }
+
+    // Сохраняем флаг завершения миграции
+    suspend fun saveMigrationCompleted(completed: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.MIGRATION_COMPLETED] = completed
+        }
+    }
+
+    // Получаем флаг завершения миграции
+    val migrationCompleted: Flow<Boolean> = context.dataStore.data
+        .map { preferences ->
+            preferences[PreferencesKeys.MIGRATION_COMPLETED] ?: false
         }
 
     // Сохраняем отдельную запись
@@ -80,6 +94,28 @@ class DataStoreManager(private val context: Context) {
             preferences.remove(doublePreferencesKey("record_${index}_curr"))
             preferences.remove(doublePreferencesKey("record_${index}_cons"))
             preferences.remove(doublePreferencesKey("record_${index}_cost"))
+        }
+    }
+
+    // Миграция записей
+    suspend fun migrateRecords(records: List<ElectricityRecord>) {
+        // Очищаем старые данные
+        val currentCount = dataStore.data.first()[PreferencesKeys.RECORDS_COUNT] ?: 0
+        for (i in 0 until currentCount) {
+            removeRecord(i)
+        }
+
+        // Сохраняем новые записи
+        for ((index, record) in records.withIndex()) {
+            saveRecord(record, index)
+        }
+
+        // Сохраняем количество записей
+        saveRecordsCount(records.size)
+
+        // Сохраняем последние показания как предыдущие
+        if (records.isNotEmpty()) {
+            savePreviousReading(records.last().currentReading)
         }
     }
 }
