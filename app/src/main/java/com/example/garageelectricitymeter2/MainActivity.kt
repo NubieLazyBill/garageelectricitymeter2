@@ -45,6 +45,23 @@ class MainActivity : ComponentActivity() {
                     if (migrationCompleted) {
                         Box(modifier = Modifier.fillMaxSize()) {
                             ElectricityMeterApp(viewModel = viewModel)
+
+                            // ВРЕМЕННАЯ кнопка для сброса миграции (удалить после использования)
+                            Button(
+                                onClick = {
+                                    coroutineScope.launch {
+                                        viewModel.resetMigration()
+                                    }
+                                },
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(8.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.error
+                                )
+                            ) {
+                                Text("Сбросить миграцию")
+                            }
                         }
                     } else {
                         MigrationScreen(
@@ -130,22 +147,85 @@ class ElectricityViewModel(context: Context) : ViewModel() {
     }
 
     suspend fun migrateOldData(records: List<ElectricityRecord>) {
+        println("Начало миграции: ${records.size} записей")
+
+        // Сначала сохраняем записи с нулевой стоимостью
         dataStoreManager.migrateRecords(records)
         dataStoreManager.saveMigrationCompleted(true)
 
-        // Немедленно обновляем UI, не дожидаясь асинхронной загрузки
+        // Немедленно обновляем UI
         _records.clear()
         _records.addAll(records)
         if (records.isNotEmpty()) {
             previousReading = records.last().currentReading
         }
+
+        println("Данные мигрированы, начинаем пересчет стоимостей...")
+
+        // Пересчитываем стоимости
+        recalculateCosts()
+
+        println("Миграция завершена успешно!")
+    }
+
+    private suspend fun recalculateCosts() {
+        var currentTariff = 4.0
+        val updatedRecords = mutableListOf<ElectricityRecord>()
+
+        for (record in _records) {
+            // Определяем тариф по дате
+            // Все записи до 15.10.24 - 4 рубля, после - 5 рублей
+            if (record.date == "15.10.24" || isDateAfter(record.date, "15.10.24")) {
+                currentTariff = 5.0
+            }
+
+            // Пересчитываем стоимость
+            val newCost = record.consumption * currentTariff
+
+            // Создаем обновленную запись
+            val updatedRecord = record.copy(cost = newCost)
+            updatedRecords.add(updatedRecord)
+
+            println("Пересчет: ${record.date} -> ${record.consumption} кВт*ч * $currentTariff руб. = $newCost руб.")
+        }
+
+        // Заменяем все записи на обновленные
+        _records.clear()
+        _records.addAll(updatedRecords)
+
+        // Сохраняем все обратно в DataStore
+        for ((index, record) in _records.withIndex()) {
+            dataStoreManager.saveRecord(record, index)
+        }
+
+        println("Пересчитаны стоимости с правильными тарифами")
+    }
+
+    // Вспомогательная функция для сравнения дат
+    private fun isDateAfter(dateStr: String, compareDateStr: String): Boolean {
+        try {
+            val (day, month, year) = dateStr.split(".").map { it.toInt() }
+            val (compareDay, compareMonth, compareYear) = compareDateStr.split(".").map { it.toInt() }
+
+            val fullYear = if (year < 100) 2000 + year else year
+            val compareFullYear = if (compareYear < 100) 2000 + compareYear else compareYear
+
+            return when {
+                fullYear > compareFullYear -> true
+                fullYear < compareFullYear -> false
+                month > compareMonth -> true
+                month < compareMonth -> false
+                else -> day > compareDay
+            }
+        } catch (e: Exception) {
+            return false
+        }
     }
 
     suspend fun skipMigration() {
-        dataStoreManager.saveMigrationCompleted(true) // пропускаем миграцию
+        dataStoreManager.saveMigrationCompleted(true)
     }
 
-    // В ElectricityViewModel добавьте:
     suspend fun resetMigration() {
         dataStoreManager.saveMigrationCompleted(false)
     }
@@ -292,8 +372,6 @@ fun ElectricityMeterApp(viewModel: ElectricityViewModel) {
     }
 }
 
-// RecordCard и GarageElectricityMeter2Theme остаются без изменений
-
 @Composable
 fun RecordCard(record: ElectricityRecord, onDelete: () -> Unit) {
     Card(
@@ -411,7 +489,7 @@ fun MigrationScreen(
 // Функция для парсинга ваших старых данных
 fun parseOldData(): List<ElectricityRecord> {
     val rawData = """
-        14.10.23 - 223 1кВт - 4₽
+        14.10.23 - 223
         15.11.23 - 917
         16.12.23- 1875
         15.01.24-2951
@@ -423,7 +501,7 @@ fun parseOldData(): List<ElectricityRecord> {
         16.07.24-6428
         14.08.24-6444
         16.09.24-6576
-        15.10.24-7027 1кВт - 5₽
+        15.10.24-7027
         15.11.24 - 7839
         14.12.24-8818
         15.01.25-9861
@@ -439,31 +517,21 @@ fun parseOldData(): List<ElectricityRecord> {
     val records = mutableListOf<ElectricityRecord>()
     val lines = rawData.split("\n")
     var previousReading = 0.0
-    var currentTariff = 4.0 // начальный тариф
 
     for (line in lines) {
         try {
-            // Улучшенный парсинг - обрабатываем разные форматы дат
-            val cleanLine = line.replace("кВт", "").replace("₽", "").trim()
-
-            // Разделяем на части, учитывая разные разделители
-            val parts = cleanLine.split("-", " ", "–")
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
+            // Простой парсинг - ищем дату и показания
+            val cleanLine = line.replace("-", " ").replace("  ", " ")
+            val parts = cleanLine.split(" ").filter { it.isNotEmpty() }
 
             if (parts.size >= 2) {
                 val dateStr = parts[0]
                 val currentReading = parts[1].toDouble()
 
-                // Определяем тариф (если указан в строке)
-                if (line.contains("1кВт") && parts.size >= 3) {
-                    parts[2].toDoubleOrNull()?.let {
-                        currentTariff = it
-                    }
-                }
-
                 val consumption = if (previousReading > 0) currentReading - previousReading else 0.0
-                val cost = consumption * currentTariff
+
+                // Временная стоимость (будет пересчитана в recalculateCosts)
+                val cost = 0.0
 
                 records.add(
                     ElectricityRecord(
@@ -477,15 +545,14 @@ fun parseOldData(): List<ElectricityRecord> {
                 )
 
                 previousReading = currentReading
+                println("Добавлена запись: $dateStr - $currentReading кВт*ч")
             }
         } catch (e: Exception) {
-            println("Ошибка парсинга строки: $line - ${e.message}")
+            println("Ошибка парсинга строки: '$line' - ${e.message}")
             continue
         }
     }
 
     println("Мигрировано записей: ${records.size}")
-    records.forEach { println("Запись: ${it.date} - ${it.currentReading}") }
-
     return records
 }
