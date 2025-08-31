@@ -40,9 +40,12 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val migrationCompleted by viewModel.migrationCompleted.collectAsState(initial = false)
+                    val coroutineScope = rememberCoroutineScope()
 
                     if (migrationCompleted) {
-                        ElectricityMeterApp(viewModel = viewModel)
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            ElectricityMeterApp(viewModel = viewModel)
+                        }
                     } else {
                         MigrationScreen(
                             viewModel = viewModel,
@@ -89,9 +92,14 @@ class ElectricityViewModel(context: Context) : ViewModel() {
 
         viewModelScope.launch {
             // Загружаем записи
-            val loadedRecords = dataStoreManager.getRecords()
-            _records.clear()
-            _records.addAll(loadedRecords)
+            try {
+                val loadedRecords = dataStoreManager.getRecords()
+                _records.clear()
+                _records.addAll(loadedRecords)
+                println("Загружено записей: ${_records.size}")
+            } catch (e: Exception) {
+                println("Ошибка загрузки записей: ${e.message}")
+            }
         }
     }
 
@@ -123,12 +131,23 @@ class ElectricityViewModel(context: Context) : ViewModel() {
 
     suspend fun migrateOldData(records: List<ElectricityRecord>) {
         dataStoreManager.migrateRecords(records)
-        dataStoreManager.saveMigrationCompleted(true) // сохраняем флаг
-        loadData() // Перезагружаем данные
+        dataStoreManager.saveMigrationCompleted(true)
+
+        // Немедленно обновляем UI, не дожидаясь асинхронной загрузки
+        _records.clear()
+        _records.addAll(records)
+        if (records.isNotEmpty()) {
+            previousReading = records.last().currentReading
+        }
     }
 
     suspend fun skipMigration() {
         dataStoreManager.saveMigrationCompleted(true) // пропускаем миграцию
+    }
+
+    // В ElectricityViewModel добавьте:
+    suspend fun resetMigration() {
+        dataStoreManager.saveMigrationCompleted(false)
     }
 }
 
@@ -315,6 +334,7 @@ fun RecordCard(record: ElectricityRecord, onDelete: () -> Unit) {
             }
         }
     }
+
 }
 
 @Composable
@@ -356,12 +376,14 @@ fun MigrationScreen(
         Button(
             onClick = {
                 coroutineScope.launch {
-                    migrationStatus = "Миграция..."
+                    migrationStatus = "Парсим данные..."
                     try {
                         val records = parseOldData()
+                        migrationStatus = "Найдено ${records.size} записей. Сохраняем..."
                         viewModel.migrateOldData(records)
-                        migrationStatus = "Миграция завершена успешно!"
-                        delay(1000)
+                        migrationStatus = "Миграция завершена успешно! Добавлено ${records.size} записей."
+                        delay(2000)
+                        onMigrationComplete()
                     } catch (e: Exception) {
                         migrationStatus = "Ошибка: ${e.message}"
                     }
@@ -377,6 +399,7 @@ fun MigrationScreen(
             onClick = {
                 coroutineScope.launch {
                     viewModel.skipMigration()
+                    onMigrationComplete()
                 }
             }
         ) {
@@ -416,23 +439,25 @@ fun parseOldData(): List<ElectricityRecord> {
     val records = mutableListOf<ElectricityRecord>()
     val lines = rawData.split("\n")
     var previousReading = 0.0
-    var currentTariff = 5.0 // текущий тариф
+    var currentTariff = 4.0 // начальный тариф
 
     for (line in lines) {
         try {
-            // Парсим дату и показания
-            val parts = line.split("-", " ")
+            // Улучшенный парсинг - обрабатываем разные форматы дат
+            val cleanLine = line.replace("кВт", "").replace("₽", "").trim()
+
+            // Разделяем на части, учитывая разные разделители
+            val parts = cleanLine.split("-", " ", "–")
                 .map { it.trim() }
-                .filter { it.isNotEmpty() && it.toDoubleOrNull() != null }
+                .filter { it.isNotEmpty() }
 
             if (parts.size >= 2) {
-                val date = parts[0]
+                val dateStr = parts[0]
                 val currentReading = parts[1].toDouble()
 
                 // Определяем тариф (если указан в строке)
-                if (line.contains("1кВт")) {
-                    val tariffMatch = Regex("""(\d+)₽""").find(line)
-                    tariffMatch?.groupValues?.get(1)?.toDouble()?.let {
+                if (line.contains("1кВт") && parts.size >= 3) {
+                    parts[2].toDoubleOrNull()?.let {
                         currentTariff = it
                     }
                 }
@@ -443,7 +468,7 @@ fun parseOldData(): List<ElectricityRecord> {
                 records.add(
                     ElectricityRecord(
                         id = UUID.randomUUID().toString(),
-                        date = date,
+                        date = dateStr,
                         previousReading = previousReading,
                         currentReading = currentReading,
                         consumption = consumption,
@@ -454,10 +479,13 @@ fun parseOldData(): List<ElectricityRecord> {
                 previousReading = currentReading
             }
         } catch (e: Exception) {
-            // Пропускаем некорректные строки
+            println("Ошибка парсинга строки: $line - ${e.message}")
             continue
         }
     }
+
+    println("Мигрировано записей: ${records.size}")
+    records.forEach { println("Запись: ${it.date} - ${it.currentReading}") }
 
     return records
 }

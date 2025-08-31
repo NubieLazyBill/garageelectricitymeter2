@@ -98,9 +98,13 @@ class DataStoreManager(private val context: Context) {
     }
 
     // Миграция записей
+    // В DataStoreManager исправьте функцию migrateRecords:
     suspend fun migrateRecords(records: List<ElectricityRecord>) {
-        // Очищаем старые данные
-        val currentCount = dataStore.data.first()[PreferencesKeys.RECORDS_COUNT] ?: 0
+        // Получаем текущие настройки
+        val preferences = dataStore.data.first()
+
+        // Очищаем ВСЕ старые записи
+        val currentCount = preferences[PreferencesKeys.RECORDS_COUNT] ?: 0
         for (i in 0 until currentCount) {
             removeRecord(i)
         }
@@ -117,5 +121,7 @@ class DataStoreManager(private val context: Context) {
         if (records.isNotEmpty()) {
             savePreviousReading(records.last().currentReading)
         }
+
+        println("Успешно мигрировано ${records.size} записей")
     }
 }
