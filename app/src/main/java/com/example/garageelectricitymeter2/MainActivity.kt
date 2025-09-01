@@ -1,5 +1,6 @@
 package com.example.garageelectricitymeter2
 
+import android.R as AndroidR
 import android.content.Context
 import android.os.Bundle
 import android.view.ViewGroup
@@ -54,7 +55,21 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.layout.size
 import java.util.Calendar
 import androidx.compose.material3.Text
-
+import android.widget.Toast
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import java.io.File
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.graphics.Color
+import android.os.Build
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 
 // Функция для преобразования даты в сортируемый формат (год-месяц)
 private fun getSortableDate(month: String, year: String): String {
@@ -133,10 +148,10 @@ fun ConsumptionLineChart(chartData: List<ChartData>) {
             update = { chart ->
                 if (entries.isNotEmpty()) {
                     val dataSet = LineDataSet(entries, "Потребление электроэнергии (кВт·ч)").apply {
-                        color = android.graphics.Color.BLUE
-                        valueTextColor = android.graphics.Color.BLACK
+                        color = Color.BLUE
+                        valueTextColor = Color.BLACK
                         lineWidth = 2f
-                        setCircleColor(android.graphics.Color.RED)
+                        setCircleColor(Color.RED)
                         circleRadius = 4f
                         setDrawCircleHole(false)
                         valueTextSize = 10f
@@ -201,7 +216,7 @@ class MainActivity : ComponentActivity() {
         }
     }
     private fun setupMonthlyReminder() {
-        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
         val intent = Intent(this, ReminderReceiver::class.java)
         val pendingIntent = PendingIntent.getBroadcast(
             this,
@@ -431,6 +446,8 @@ fun ElectricityMeterApp(
     var currentReading by remember { mutableStateOf("") }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var recordToDelete by remember { mutableStateOf<ElectricityRecord?>(null) }
+    var showExportDialog by remember { mutableStateOf(false) } // Добавляем состояние для экспорта
+    var showImportDialog by remember { mutableStateOf(false) } // Добавляем состояние для импорта
     val tariff = 5.0
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -445,6 +462,25 @@ fun ElectricityMeterApp(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
+            // Кнопка экспорта данных
+            TextButton(
+                onClick = {
+                    showExportDialog = true // Показываем диалог экспорта
+                },
+                modifier = Modifier.padding(4.dp)
+            ) {
+                Text("📤 Экспорт")
+            }
+
+            // Кнопка теста уведомления
+            TextButton(
+                onClick = {
+                    showTestNotification(context)
+                },
+                modifier = Modifier.padding(4.dp)
+            ) {
+                Text("🔔 Тест")
+            }
 
             TextButton(
                 onClick = onShowChart,
@@ -452,11 +488,87 @@ fun ElectricityMeterApp(
             ) {
                 Text("📊 График")
             }
+
+            // Кнопка импорта данных
+            TextButton(
+                onClick = {
+                    showImportDialog = true // Показываем диалог импорта
+                },
+                modifier = Modifier.padding(4.dp)
+            ) {
+                Text("📥 Импорт")
+            }
+        }
+
+        // Диалог экспорта
+        if (showExportDialog) {
+            AlertDialog(
+                onDismissRequest = { showExportDialog = false },
+                title = { Text("Экспорт данных") },
+                text = { Text("Экспортировать ${viewModel.records.size} записей в файл?") },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            exportDataToFile(context, viewModel.records)
+                            showExportDialog = false
+                        }
+                    ) {
+                        Text("Экспортировать")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { showExportDialog = false }
+                    ) {
+                        Text("Отмена")
+                    }
+                }
+            )
+        }
+
+        // Диалог импорта
+        if (showImportDialog) {
+            val file = remember { File(context.getExternalFilesDir(null), "electricity_backup.txt") }
+
+            if (!file.exists()) {
+                LaunchedEffect(Unit) {
+                    Toast.makeText(context, "Файл backup не найден", Toast.LENGTH_SHORT).show()
+                    showImportDialog = false
+                }
+            } else {
+                AlertDialog(
+                    onDismissRequest = { showImportDialog = false },
+                    title = { Text("Импорт данных") },
+                    text = { Text("Внимание! Это перезапишет текущие данные. Продолжить?") },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                importDataFromFile(context, viewModel)
+                                showImportDialog = false
+                            }
+                        ) {
+                            Text("Импортировать")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(
+                            onClick = { showImportDialog = false }
+                        ) {
+                            Text("Отмена")
+                        }
+                    }
+                )
+            }
         }
 
         // Статус напоминания
         ReminderStatus(viewModel)
 
+        Text(
+            text = "Счётчик электроэнергии",
+            style = MaterialTheme.typography.headlineMedium,
+            modifier = Modifier.padding(bottom = 16.dp)
+        )
 
         // Отображение текущего тарифа
         Text(
@@ -601,7 +713,7 @@ private fun showTestNotification(context: Context) {
     val notificationManager = NotificationManagerCompat.from(context)
 
     // Создаем канал если нужно
-    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         val channel = NotificationChannel(
             "electricity_reminder_channel",
             "Напоминания об оплате",
@@ -613,7 +725,7 @@ private fun showTestNotification(context: Context) {
     }
 
     val notification = NotificationCompat.Builder(context, "electricity_reminder_channel")
-        .setSmallIcon(android.R.drawable.ic_dialog_info)
+        .setSmallIcon(AndroidR.drawable.ic_dialog_info)
         .setContentTitle("🔔 динь-дилинь!")
         .setContentText("Оплата электроэнергии в гараже!")
         .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -621,6 +733,229 @@ private fun showTestNotification(context: Context) {
         .build()
 
     notificationManager.notify(999, notification) // ID 999 для тестовых
+}
+
+// Функция экспорта данных с подтверждением
+/*@Composable
+fun ExportDataWithConfirmation(context: Context, records: List<ElectricityRecord>) {
+    var showDialog by remember { mutableStateOf(true) }
+
+    if (showDialog) {
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            title = { Text("Экспорт данных") },
+            text = { Text("Экспортировать ${records.size} записей в файл?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        exportDataToFile(context, records)
+                        showDialog = false
+                    }
+                ) {
+                    Text("Экспортировать")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showDialog = false }
+                ) {
+                    Text("Отмена")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun ImportDataWithConfirmation(context: Context, viewModel: ElectricityViewModel) {
+    var showDialog by remember { mutableStateOf(true) }
+    val file = remember { File(context.getExternalFilesDir(null), "electricity_backup.txt") }
+
+    if (showDialog) {
+        if (!file.exists()) {
+            // Use side effect to show toast
+            LaunchedEffect(Unit) {
+                Toast.makeText(context, "Файл backup не найден", Toast.LENGTH_SHORT).show()
+                showDialog = false
+            }
+            return
+        }
+
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            title = { Text("Импорт данных") },
+            text = { Text("Внимание! Это перезапишет текущие данные. Продолжить?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        importDataFromFile(context, viewModel)
+                        showDialog = false
+                    }
+                ) {
+                    Text("Импортировать")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showDialog = false }
+                ) {
+                    Text("Отмена")
+                }
+            }
+        )
+    }
+}*/
+
+
+
+// Парсер backup файла
+private fun parseBackupFile(content: String): List<ElectricityRecord> {
+    val records = mutableListOf<ElectricityRecord>()
+    var previousReading = 0.0
+
+    content.lines().forEach { line ->
+        val cleanLine = line.trim()
+        if (cleanLine.isNotEmpty() && !cleanLine.startsWith("#")) {
+            try {
+                val parts = cleanLine.split("-", "–").map { it.trim() }
+                if (parts.size >= 2) {
+                    val dateStr = parts[0]
+                    val currentReading = parts[1].toDouble()
+                    val consumption = if (previousReading > 0) currentReading - previousReading else 0.0
+
+                    // Определяем тариф по дате
+                    val tariff = if (isDateAfter(dateStr, "14.10.24")) 5.0 else 4.0
+                    val cost = consumption * tariff
+
+                    records.add(
+                        ElectricityRecord(
+                            id = UUID.randomUUID().toString(),
+                            date = dateStr,
+                            previousReading = previousReading,
+                            currentReading = currentReading,
+                            consumption = consumption,
+                            cost = cost
+                        )
+                    )
+
+                    previousReading = currentReading
+                }
+            } catch (e: Exception) {
+                // Пропускаем некорректные строки
+                println("Ошибка парсинга строки: '$line'")
+            }
+        }
+    }
+
+    return records
+}
+
+// Функция экспорта данных в файл
+private fun exportDataToFile(context: Context, records: List<ElectricityRecord>) {
+    try {
+        val content = buildString {
+            appendln("# Формат: дата - показания")
+            appendln("# Пример: 14.10.23 - 223")
+            appendln()
+
+            records.sortedBy { it.date }.forEach { record ->
+                val datePart = record.date.split(" ")[0] // Берем только дату без времени
+                appendln("$datePart - ${record.currentReading.toInt()}")
+            }
+        }
+
+        // Сохраняем во внешнее хранилище
+        val file = File(context.getExternalFilesDir(null), "electricity_backup.txt")
+        file.writeText(content)
+
+        // Показываем уведомление об успехе
+        Toast.makeText(context, "Данные экспортированы в: ${file.absolutePath}", Toast.LENGTH_LONG).show()
+
+    } catch (e: Exception) {
+        Toast.makeText(context, "Ошибка экспорта: ${e.message}", Toast.LENGTH_SHORT).show()
+    }
+}
+
+// Функция импорта данных из файла
+private fun importDataFromFile(context: Context, viewModel: ElectricityViewModel) {
+    try {
+        val file = File(context.getExternalFilesDir(null), "electricity_backup.txt")
+        if (!file.exists()) {
+            Toast.makeText(context, "Файл backup.txt не найден", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val content = file.readText()
+        val records = parseBackupFile(content)
+
+        if (records.isNotEmpty()) {
+            // Запускаем миграцию
+            CoroutineScope(Dispatchers.Main).launch {
+                viewModel.migrateOldData(records)
+                Toast.makeText(context, "Импортировано ${records.size} записей", Toast.LENGTH_LONG).show()
+            }
+        }
+
+    } catch (e: Exception) {
+        Toast.makeText(context, "Ошибка импорта: ${e.message}", Toast.LENGTH_SHORT).show()
+    }
+}
+
+// Функция показа текстовых данных для копирования
+@Composable
+private fun ShowTextExportDialog(context: Context, records: List<ElectricityRecord>) {
+    // Note: You can't use AlertDialog.Builder in Compose, use the Compose AlertDialog instead
+    var showDialog by remember { mutableStateOf(true) }
+
+    if (showDialog) {
+        AlertDialog(
+            onDismissRequest = { showDialog = false },
+            title = { Text("Данные для копирования") },
+            text = {
+                val content = buildString {
+                    appendln("# Backup данных электросчетчика")
+                    appendln("# Формат: дата - показания")
+                    appendln("# Пример: 14.10.23 - 223")
+                    appendln()
+                    records.sortedBy { it.date }.forEach { record ->
+                        val datePart = record.date.split(" ")[0]
+                        appendln("$datePart - ${record.currentReading.toInt()}")
+                    }
+                }
+                Text(content)
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val content = buildString {
+                            appendln("# Backup данных электросчетчика")
+                            appendln("# Формат: дата - показания")
+                            appendln("# Пример: 14.10.23 - 223")
+                            appendln()
+                            records.sortedBy { it.date }.forEach { record ->
+                                val datePart = record.date.split(" ")[0]
+                                appendln("$datePart - ${record.currentReading.toInt()}")
+                            }
+                        }
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val clip = ClipData.newPlainText("Electricity Backup", content)
+                        clipboard.setPrimaryClip(clip)
+                        Toast.makeText(context, "Данные скопированы в буфер", Toast.LENGTH_SHORT).show()
+                        showDialog = false
+                    }
+                ) {
+                    Text("Копировать")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showDialog = false }
+                ) {
+                    Text("Закрыть")
+                }
+            }
+        )
+    }
 }
 
 // Компонент статуса напоминания
@@ -656,7 +991,7 @@ fun ReminderStatus(viewModel: ElectricityViewModel) {
                     modifier = Modifier.size(24.dp)
                 ) {
                     Icon(
-                        painter = painterResource(android.R.drawable.ic_menu_help),
+                        painterResource(AndroidR.drawable.ic_menu_help),
                         contentDescription = "Тест уведомления",
                         modifier = Modifier.size(16.dp)
                     )
