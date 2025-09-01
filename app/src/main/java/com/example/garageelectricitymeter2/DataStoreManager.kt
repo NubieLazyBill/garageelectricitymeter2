@@ -7,6 +7,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import java.util.Calendar
 
 
 data class ChartData(
@@ -20,41 +21,58 @@ fun prepareChartData(records: List<ElectricityRecord>): List<ChartData> {
     val monthlyData = mutableMapOf<String, MutableList<ElectricityRecord>>()
 
     // Группируем записи по месяцам
-    records.filter { it.previousReading > 0 }
-        .forEach { record ->
-            try {
-                // Используем правильный формат даты (с учетом времени)
-                val datePart = record.date.split(" ")[0] // Берем только дату без времени
-                val parts = datePart.split(".").map { it.toInt() }
-
-                if (parts.size >= 3) {
-                    val day = parts[0]
-                    val month = parts[1]
-                    val year = parts[2]
-                    val key = "$year-${month.toString().padStart(2, '0')}"
-
-                    monthlyData.getOrPut(key) { mutableListOf() }.add(record)
+    records.forEach { record ->
+        try {
+            val dateParts = record.date.split(".")
+            if (dateParts.size >= 2) {
+                val day = dateParts[0].toInt()
+                val month = dateParts[1].toInt()
+                val year = if (dateParts.size >= 3) {
+                    val yearPart = dateParts[2].split(" ")[0].toInt()
+                    if (yearPart < 100) 2000 + yearPart else yearPart
+                } else {
+                    Calendar.getInstance().get(Calendar.YEAR)
                 }
-            } catch (e: Exception) {
-                // Пропускаем некорректные записи
-                println("Ошибка обработки даты: ${record.date} - ${e.message}")
+
+                val monthNames = arrayOf(
+                    "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+                    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"
+                )
+
+                val monthKey = "$year-${month.toString().padStart(2, '0')}"
+                val monthName = monthNames.getOrNull(month - 1) ?: "Неизвестно"
+
+                if (!monthlyData.containsKey(monthKey)) {
+                    monthlyData[monthKey] = mutableListOf()
+                }
+                monthlyData[monthKey]?.add(record)
             }
+        } catch (e: Exception) {
+            println("Ошибка обработки даты: ${record.date} - ${e.message}")
         }
+    }
 
-    return monthlyData.map { (key, monthRecords) ->
-        val totalConsumption = monthRecords.sumOf { it.consumption }
-        val totalCost = monthRecords.sumOf { it.cost }
+    // Сортируем по ключу (год-месяц) и создаем ChartData
+    return monthlyData.entries
+        .sortedBy { it.key } // Сортируем по возрастанию даты
+        .map { entry ->
+            val (year, monthNum) = entry.key.split("-")
+            val monthNames = arrayOf(
+                "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+                "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"
+            )
+            val monthName = monthNames.getOrNull(monthNum.toInt() - 1) ?: "Неизвестно"
 
-        val year = key.split("-")[0].toInt()
-        val month = key.split("-")[1].toInt()
+            val totalConsumption = entry.value.sumOf { it.consumption }
+            val totalCost = entry.value.sumOf { it.cost }
 
-        ChartData(
-            month = getMonthName(month),
-            year = year.toString(),
-            consumption = totalConsumption,
-            cost = totalCost
-        )
-    }.sortedBy { "${it.year}-${it.month}" } // Правильная сортировка
+            ChartData(
+                month = monthName,
+                year = year,
+                consumption = totalConsumption,
+                cost = totalCost
+            )
+        }
 }
 
 // Функция для получения названия месяца

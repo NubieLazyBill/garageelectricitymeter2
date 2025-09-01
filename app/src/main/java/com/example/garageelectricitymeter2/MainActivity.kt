@@ -37,6 +37,26 @@ import com.github.mikephil.charting.data.LineDataSet
 import com.github.mikephil.charting.formatter.ValueFormatter
 import androidx.compose.ui.viewinterop.AndroidView
 
+// Функция для преобразования даты в сортируемый формат (год-месяц)
+private fun getSortableDate(month: String, year: String): String {
+    val monthNumber = when (month.toLowerCase()) {
+        "январь", "jan" -> "01"
+        "февраль", "feb" -> "02"
+        "март", "mar" -> "03"
+        "апрель", "apr" -> "04"
+        "май", "may" -> "05"
+        "июнь", "jun" -> "06"
+        "июль", "jul" -> "07"
+        "август", "aug" -> "08"
+        "сентябрь", "sep" -> "09"
+        "октябрь", "oct" -> "10"
+        "ноябрь", "nov" -> "11"
+        "декабрь", "dec" -> "12"
+        else -> "00"
+    }
+    return "$year-$monthNumber"
+}
+
 @Composable
 fun ConsumptionLineChart(chartData: List<ChartData>) {
     val entries = remember(chartData) {
@@ -70,7 +90,9 @@ fun ConsumptionLineChart(chartData: List<ChartData>) {
                         override fun getFormattedValue(value: Float): String {
                             val index = value.toInt()
                             return if (index in chartData.indices) {
-                                "${chartData[index].month.take(3)} ${chartData[index].year}"
+                                val data = chartData[index]
+                                // Берем только первые 3 буквы месяца и год
+                                "${data.month.take(3)} '${data.year.takeLast(2)}"
                             } else {
                                 ""
                             }
@@ -122,6 +144,10 @@ enum class AppScreen {
 }
 
 class MainActivity : ComponentActivity() {
+    override fun onBackPressed() {
+        // Завершаем активность
+        finish()
+    }
     private val viewModel: ElectricityViewModel by viewModels {
         ElectricityViewModelFactory(applicationContext)
     }
@@ -446,7 +472,17 @@ fun ElectricityMeterApp(
                     .weight(1f),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(viewModel.records.reversed()) { record ->
+                items(viewModel.records.sortedByDescending {
+                    // Сортируем по дате (новые сверху)
+                    try {
+                        val dateParts = it.date.split(".").map { part -> part.toInt() }
+                        // Создаем сортируемую дату в формате ГГГГММДД
+                        val year = if (dateParts[2] < 100) 2000 + dateParts[2] else dateParts[2]
+                        year * 10000 + dateParts[1] * 100 + dateParts[0]
+                    } catch (e: Exception) {
+                        0
+                    }
+                }) { record ->
                     RecordCard(
                         record = record,
                         onDelete = {
@@ -857,7 +893,7 @@ fun parseOldData(): List<ElectricityRecord> {
 16.02.24-4028
 14.03.24-4860
 15.04.24-5674
-15.05.24-61534
+15.05.24-6153
 14.06.24-6403
 16.07.24-6428
 14.08.24-6444
