@@ -36,6 +36,25 @@ import com.github.mikephil.charting.data.LineData
 import com.github.mikephil.charting.data.LineDataSet
 import com.github.mikephil.charting.formatter.ValueFormatter
 import androidx.compose.ui.viewinterop.AndroidView
+import android.app.AlarmManager
+import android.app.PendingIntent
+import android.content.Intent
+import androidx.core.app.AlarmManagerCompat
+import androidx.compose.ui.res.painterResource
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.remember
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.layout.size
+import java.util.Calendar
+import androidx.compose.material3.Text
+
 
 // Функция для преобразования даты в сортируемый формат (год-месяц)
 private fun getSortableDate(month: String, year: String): String {
@@ -154,6 +173,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        setupMonthlyReminder()
         setContent {
             GarageElectricityMeter2Theme {
                 Surface(
@@ -178,6 +199,34 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+    private fun setupMonthlyReminder() {
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = Intent(this, ReminderReceiver::class.java)
+        val pendingIntent = PendingIntent.getBroadcast(
+            this,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val calendar = Calendar.getInstance().apply {
+            set(Calendar.DAY_OF_MONTH, 14)
+            set(Calendar.HOUR_OF_DAY, 12)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+
+            // Если сегодня уже прошло 14 число, ставим на следующий месяц
+            if (get(Calendar.DAY_OF_MONTH) > 14) {
+                add(Calendar.MONTH, 1)
+            }
+        }
+
+        AlarmManagerCompat.setExactAndAllowWhileIdle(
+            alarmManager,
+            AlarmManager.RTC_WAKEUP,
+            calendar.timeInMillis,
+            pendingIntent
+        )
     }
 }
 
@@ -214,6 +263,21 @@ class ElectricityViewModelFactory(private val context: Context) : ViewModelProvi
 }
 
 class ElectricityViewModel(context: Context) : ViewModel() {
+
+    fun getNextReminderDate(): String {
+        val calendar = Calendar.getInstance()
+        val currentDay = calendar.get(Calendar.DAY_OF_MONTH)
+        val currentMonth = calendar.get(Calendar.MONTH) + 1
+        val currentYear = calendar.get(Calendar.YEAR)
+
+        return if (currentDay < 14) {
+            "14.$currentMonth.$currentYear"
+        } else {
+            val nextMonth = if (currentMonth == 12) 1 else currentMonth + 1
+            val nextYear = if (currentMonth == 12) currentYear + 1 else currentYear
+            "14.$nextMonth.$nextYear"
+        }
+    }
     private val dataStoreManager = DataStoreManager(context)
     private val _records = mutableStateListOf<ElectricityRecord>()
     val records: List<ElectricityRecord> get() = _records
@@ -369,6 +433,7 @@ fun ElectricityMeterApp(
     var recordToDelete by remember { mutableStateOf<ElectricityRecord?>(null) }
     val tariff = 5.0
     val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -378,21 +443,20 @@ fun ElectricityMeterApp(
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
+
             TextButton(
                 onClick = onShowChart,
-                modifier = Modifier.padding(8.dp)
+                modifier = Modifier.padding(4.dp)
             ) {
                 Text("📊 График")
             }
         }
 
-        Text(
-            text = "Счётчик электроэнергии",
-            style = MaterialTheme.typography.headlineMedium,
-            modifier = Modifier.padding(bottom = 16.dp)
-        )
+        // Статус напоминания
+        ReminderStatus(viewModel)
+
 
         // Отображение текущего тарифа
         Text(
@@ -532,6 +596,82 @@ fun ElectricityMeterApp(
     }
 }
 
+// Функция для тестового уведомления
+private fun showTestNotification(context: Context) {
+    val notificationManager = NotificationManagerCompat.from(context)
+
+    // Создаем канал если нужно
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        val channel = NotificationChannel(
+            "electricity_reminder_channel",
+            "Напоминания об оплате",
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = "Напоминания об оплате электроэнергии"
+        }
+        notificationManager.createNotificationChannel(channel)
+    }
+
+    val notification = NotificationCompat.Builder(context, "electricity_reminder_channel")
+        .setSmallIcon(android.R.drawable.ic_dialog_info)
+        .setContentTitle("🔔 динь-дилинь!")
+        .setContentText("Оплата электроэнергии в гараже!")
+        .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        .setAutoCancel(true)
+        .build()
+
+    notificationManager.notify(999, notification) // ID 999 для тестовых
+}
+
+// Компонент статуса напоминания
+@Composable
+fun ReminderStatus(viewModel: ElectricityViewModel) {
+    val context = LocalContext.current
+    val nextReminderDate = remember { viewModel.getNextReminderDate() }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "📅 Следующее напоминание:",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+
+                // Маленькая кнопка теста
+                IconButton(
+                    onClick = {
+                        showTestNotification(context)
+                    },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        painter = painterResource(android.R.drawable.ic_menu_help),
+                        contentDescription = "Тест уведомления",
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+
+            Text(
+                text = nextReminderDate,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+    }
+}
+
 @Composable
 fun ChartDataItem(data: ChartData, maxConsumption: Double) {
     Card(
@@ -608,7 +748,6 @@ fun ChartDataItem(data: ChartData, maxConsumption: Double) {
     }
 }
 
-// Вспомогательная функция для получения максимального потребления
 private fun getMaxConsumption(chartData: List<ChartData>): Double {
     return chartData.maxOfOrNull { it.consumption } ?: 1.0
 }
@@ -953,4 +1092,56 @@ fun parseOldData(): List<ElectricityRecord> {
     }
 
     return records
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettingsScreen(onBack: () -> Unit) {
+    var reminderEnabled by remember { mutableStateOf(true) }
+    var reminderDay by remember { mutableStateOf(14) }
+    var reminderTime by remember { mutableStateOf("12:00") }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Настройки напоминаний") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Filled.ArrowBack, contentDescription = "Назад")
+                    }
+                }
+            )
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .padding(innerPadding)
+                .padding(16.dp)
+        ) {
+            Switch(
+                checked = reminderEnabled,
+                onCheckedChange = { reminderEnabled = it },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text("Включить напоминания")
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            if (reminderEnabled) {
+                Text("День месяца:")
+                Slider(
+                    value = reminderDay.toFloat(),
+                    onValueChange = { reminderDay = it.toInt() },
+                    valueRange = 1f..28f,
+                    steps = 27
+                )
+                Text("$reminderDay число")
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text("Время напоминания:")
+                // Здесь можно добавить выбор времени
+            }
+        }
+    }
 }
