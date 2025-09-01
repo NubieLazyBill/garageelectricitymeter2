@@ -2,6 +2,7 @@ package com.example.garageelectricitymeter2
 
 import android.content.Context
 import android.os.Bundle
+import android.view.ViewGroup
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -44,45 +45,74 @@ fun ConsumptionLineChart(chartData: List<ChartData>) {
         }
     }
 
-    AndroidView(
-        factory = { context ->
-            LineChart(context).apply {
-                description.isEnabled = false
-                setTouchEnabled(true)
-                isDragEnabled = true
-                setScaleEnabled(true)
-                setPinchZoom(true)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(300.dp) // Фиксированная высота для графика
+            .padding(16.dp)
+    ) {
+        AndroidView(
+            factory = { context ->
+                LineChart(context).apply {
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
 
-                xAxis.position = XAxis.XAxisPosition.BOTTOM
-                xAxis.valueFormatter = object : ValueFormatter() {
-                    override fun getFormattedValue(value: Float): String {
-                        val index = value.toInt()
-                        return if (index in chartData.indices) {
-                            "${chartData[index].month.take(3)} ${chartData[index].year}"
-                        } else {
-                            ""
+                    description.isEnabled = false
+                    setTouchEnabled(true)
+                    isDragEnabled = true
+                    setScaleEnabled(true)
+                    setPinchZoom(true)
+
+                    xAxis.position = XAxis.XAxisPosition.BOTTOM
+                    xAxis.valueFormatter = object : ValueFormatter() {
+                        override fun getFormattedValue(value: Float): String {
+                            val index = value.toInt()
+                            return if (index in chartData.indices) {
+                                "${chartData[index].month.take(3)} ${chartData[index].year}"
+                            } else {
+                                ""
+                            }
                         }
                     }
+                    xAxis.granularity = 1f // Чтобы метки не перекрывались
+                    xAxis.setAvoidFirstLastClipping(true)
+
+                    axisRight.isEnabled = false
+
+                    // Настройка легенды
+                    legend.isEnabled = true
+
+                    // Настройка внешнего вида
+                    setDrawBorders(true)
+                    setBorderWidth(1f)
                 }
+            },
+            update = { chart ->
+                if (entries.isNotEmpty()) {
+                    val dataSet = LineDataSet(entries, "Потребление электроэнергии (кВт·ч)").apply {
+                        color = android.graphics.Color.BLUE
+                        valueTextColor = android.graphics.Color.BLACK
+                        lineWidth = 2f
+                        setCircleColor(android.graphics.Color.RED)
+                        circleRadius = 4f
+                        setDrawCircleHole(false)
+                        valueTextSize = 10f
+                        setDrawValues(true) // Показывать значения на точках
+                    }
 
-                axisRight.isEnabled = false
-            }
-        },
-        update = { chart ->
-            val dataSet = LineDataSet(entries, "Потребление электроэнергии (кВт·ч)").apply {
-                color = android.graphics.Color.BLUE
-                valueTextColor = android.graphics.Color.BLACK
-                lineWidth = 2f
-                setCircleColor(android.graphics.Color.RED)
-                circleRadius = 4f
-                setDrawCircleHole(false)
-                valueTextSize = 10f
-            }
+                    chart.data = LineData(dataSet)
 
-            chart.data = LineData(dataSet)
-            chart.invalidate() // refresh
-        }
-    )
+                    // Настройка масштабирования
+                    chart.setVisibleXRangeMaximum(6f) // Показывать не более 6 месяцев
+                    chart.moveViewToX((entries.size - 1).toFloat()) // Прокрутить к последнему элементу
+
+                    chart.invalidate() // refresh
+                }
+            }
+        )
+    }
 }
 
 
@@ -624,6 +654,8 @@ fun ConsumptionChartScreen(
 
                 ConsumptionLineChart(chartData = chartData)
 
+                Spacer(modifier = Modifier.height(16.dp)) // Добавьте отступ после графика
+
                 // Список данных по месяцам (можно прокручивать)
                 Text(
                     text = "Детализация по месяцам:",
@@ -819,8 +851,29 @@ fun MigrationScreen(
 fun parseOldData(): List<ElectricityRecord> {
     val rawData = """
         14.10.23 - 223
-        15.11.23 - 917
-        // ... остальные данные
+15.11.23 - 917
+16.12.23- 1875
+15.01.24-2951
+16.02.24-4028
+14.03.24-4860
+15.04.24-5674
+15.05.24-61534
+14.06.24-6403
+16.07.24-6428
+14.08.24-6444
+16.09.24-6576
+15.10.24-7027
+15.11.24 - 7839
+14.12.24-8818
+15.01.25-9861
+15.02.25-10861
+14.03.25 - 11696
+14.04.25 - 12418
+16.05.25 - 12792
+15.06.25 - 12953
+15.07.25 - 12977
+16.08.25 - 13006
+        
     """.trimIndent()
 
     val records = mutableListOf<ElectricityRecord>()
