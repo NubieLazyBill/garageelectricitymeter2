@@ -46,7 +46,7 @@ class MainActivity : ComponentActivity() {
                         Box(modifier = Modifier.fillMaxSize()) {
                             ElectricityMeterApp(viewModel = viewModel)
 
-                            // ВРЕМЕННАЯ кнопка для сброса миграции (удалить после использования)
+                            /*/ ВРЕМЕННАЯ кнопка для сброса миграции (удалить после использования)
                             Button(
                                 onClick = {
                                     coroutineScope.launch {
@@ -61,7 +61,7 @@ class MainActivity : ComponentActivity() {
                                 )
                             ) {
                                 Text("Сбросить миграцию")
-                            }
+                            }*/
                         }
                     } else {
                         MigrationScreen(
@@ -108,11 +108,15 @@ class ElectricityViewModel(context: Context) : ViewModel() {
         }
 
         viewModelScope.launch {
-            // Загружаем записи
+            // Загружаем записи и пересчитываем стоимость
             try {
                 val loadedRecords = dataStoreManager.getRecords()
                 _records.clear()
-                _records.addAll(loadedRecords)
+
+                // Пересчитываем стоимость для каждой записи при загрузке
+                val recordsWithRecalculatedCost = recalculateCostsForRecords(loadedRecords)
+                _records.addAll(recordsWithRecalculatedCost)
+
                 println("Загружено записей: ${_records.size}")
             } catch (e: Exception) {
                 println("Ошибка загрузки записей: ${e.message}")
@@ -120,16 +124,43 @@ class ElectricityViewModel(context: Context) : ViewModel() {
         }
     }
 
+    // Функция для пересчета стоимости при загрузке записей
+    private fun recalculateCostsForRecords(records: List<ElectricityRecord>): List<ElectricityRecord> {
+        var currentTariff = 4.0
+        val updatedRecords = mutableListOf<ElectricityRecord>()
+
+        for (record in records) {
+            // Определяем тариф по дате
+            if (isDateAfter(record.date, "14.10.24")) { // После 14.10.24 - 5 рублей
+                currentTariff = 5.0
+            }
+
+            // Пересчитываем стоимость
+            val newCost = record.consumption * currentTariff
+
+            // Создаем обновленную запись
+            val updatedRecord = record.copy(cost = newCost)
+            updatedRecords.add(updatedRecord)
+        }
+
+        return updatedRecords
+    }
+
     suspend fun addRecord(record: ElectricityRecord) {
-        _records.add(record)
-        previousReading = record.currentReading
+        // Определяем тариф для новой записи
+        val tariff = if (isDateAfter(record.date, "14.10.24")) 5.0 else 4.0
+        val recordWithCorrectCost = record.copy(cost = record.consumption * tariff)
+
+        _records.add(recordWithCorrectCost)
+        previousReading = recordWithCorrectCost.currentReading
 
         // Сохраняем в DataStore
-        dataStoreManager.saveRecord(record, _records.size - 1)
+        dataStoreManager.saveRecord(recordWithCorrectCost, _records.size - 1)
         dataStoreManager.saveRecordsCount(_records.size)
         dataStoreManager.savePreviousReading(previousReading)
     }
 
+    // Остальные методы остаются без изменений...
     suspend fun removeRecord(id: String) {
         val index = _records.indexOfFirst { it.id == id }
         if (index != -1) {
@@ -149,74 +180,42 @@ class ElectricityViewModel(context: Context) : ViewModel() {
     suspend fun migrateOldData(records: List<ElectricityRecord>) {
         println("Начало миграции: ${records.size} записей")
 
-        // Сначала сохраняем записи с нулевой стоимостью
-        dataStoreManager.migrateRecords(records)
+        // Пересчитываем стоимости перед сохранением
+        val recordsWithCost = recalculateCostsForRecords(records)
+
+        dataStoreManager.migrateRecords(recordsWithCost)
         dataStoreManager.saveMigrationCompleted(true)
 
         // Немедленно обновляем UI
         _records.clear()
-        _records.addAll(records)
-        if (records.isNotEmpty()) {
-            previousReading = records.last().currentReading
+        _records.addAll(recordsWithCost)
+        if (recordsWithCost.isNotEmpty()) {
+            previousReading = recordsWithCost.last().currentReading
         }
-
-        println("Данные мигрированы, начинаем пересчет стоимостей...")
-
-        // Пересчитываем стоимости
-        recalculateCosts()
 
         println("Миграция завершена успешно!")
-    }
-
-    private suspend fun recalculateCosts() {
-        var currentTariff = 4.0
-        val updatedRecords = mutableListOf<ElectricityRecord>()
-
-        for (record in _records) {
-            // Определяем тариф по дате
-            // Все записи до 15.10.24 - 4 рубля, после - 5 рублей
-            if (record.date == "15.10.24" || isDateAfter(record.date, "15.10.24")) {
-                currentTariff = 5.0
-            }
-
-            // Пересчитываем стоимость
-            val newCost = record.consumption * currentTariff
-
-            // Создаем обновленную запись
-            val updatedRecord = record.copy(cost = newCost)
-            updatedRecords.add(updatedRecord)
-
-            println("Пересчет: ${record.date} -> ${record.consumption} кВт*ч * $currentTariff руб. = $newCost руб.")
-        }
-
-        // Заменяем все записи на обновленные
-        _records.clear()
-        _records.addAll(updatedRecords)
-
-        // Сохраняем все обратно в DataStore
-        for ((index, record) in _records.withIndex()) {
-            dataStoreManager.saveRecord(record, index)
-        }
-
-        println("Пересчитаны стоимости с правильными тарифами")
     }
 
     // Вспомогательная функция для сравнения дат
     private fun isDateAfter(dateStr: String, compareDateStr: String): Boolean {
         try {
-            val (day, month, year) = dateStr.split(".").map { it.toInt() }
-            val (compareDay, compareMonth, compareYear) = compareDateStr.split(".").map { it.toInt() }
+            val dateParts = dateStr.split(".").map { it.toInt() }
+            val compareParts = compareDateStr.split(".").map { it.toInt() }
 
-            val fullYear = if (year < 100) 2000 + year else year
-            val compareFullYear = if (compareYear < 100) 2000 + compareYear else compareYear
-
-            return when {
-                fullYear > compareFullYear -> true
-                fullYear < compareFullYear -> false
-                month > compareMonth -> true
-                month < compareMonth -> false
-                else -> day > compareDay
+            // Форматируем даты для сравнения (день.месяц.год)
+            val date = Calendar.getInstance().apply {
+                set(Calendar.DAY_OF_MONTH, dateParts[0])
+                set(Calendar.MONTH, dateParts[1] - 1)
+                set(Calendar.YEAR, if (dateParts[2] < 100) 2000 + dateParts[2] else dateParts[2])
             }
+
+            val compareDate = Calendar.getInstance().apply {
+                set(Calendar.DAY_OF_MONTH, compareParts[0])
+                set(Calendar.MONTH, compareParts[1] - 1)
+                set(Calendar.YEAR, if (compareParts[2] < 100) 2000 + compareParts[2] else compareParts[2])
+            }
+
+            return date.after(compareDate)
         } catch (e: Exception) {
             return false
         }
@@ -237,7 +236,7 @@ fun ElectricityMeterApp(viewModel: ElectricityViewModel) {
     var currentReading by remember { mutableStateOf("") }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var recordToDelete by remember { mutableStateOf<ElectricityRecord?>(null) }
-    val tariff = 5.0
+    val tariff = 5.0 // текущий тариф
     val coroutineScope = rememberCoroutineScope()
 
     Column(
@@ -250,6 +249,14 @@ fun ElectricityMeterApp(viewModel: ElectricityViewModel) {
             text = "Счётчик электроэнергии",
             style = MaterialTheme.typography.headlineMedium,
             modifier = Modifier.padding(bottom = 16.dp)
+        )
+
+        // Отображение текущего тарифа
+        Text(
+            text = "Текущий тариф: ${"%.0f".format(tariff)} руб./кВт*ч",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(bottom = 8.dp)
         )
 
         OutlinedTextField(
@@ -374,6 +381,13 @@ fun ElectricityMeterApp(viewModel: ElectricityViewModel) {
 
 @Composable
 fun RecordCard(record: ElectricityRecord, onDelete: () -> Unit) {
+    // Определяем тариф для этой записи
+    val tariff = if (record.date == "15.10.24" || isDateAfter(record.date, "15.10.24")) {
+        5.0
+    } else {
+        4.0
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -391,6 +405,11 @@ fun RecordCard(record: ElectricityRecord, onDelete: () -> Unit) {
             Text(
                 text = "Расход: ${"%.2f".format(record.consumption)} кВт*ч",
                 style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = "Тариф: ${"%.0f".format(tariff)} руб./кВт*ч",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.secondary
             )
             Text(
                 text = "Стоимость: ${"%.2f".format(record.cost)} руб.",
@@ -412,7 +431,32 @@ fun RecordCard(record: ElectricityRecord, onDelete: () -> Unit) {
             }
         }
     }
+}
 
+// Добавим вспомогательную функцию для сравнения дат (вне composable)
+// Замените существующую функцию на эту улучшенную версию
+private fun isDateAfter(dateStr: String, compareDateStr: String): Boolean {
+    try {
+        val dateParts = dateStr.split(".").map { it.toInt() }
+        val compareParts = compareDateStr.split(".").map { it.toInt() }
+
+        // Создаем Calendar объекты для сравнения
+        val date = Calendar.getInstance().apply {
+            set(Calendar.DAY_OF_MONTH, dateParts[0])
+            set(Calendar.MONTH, dateParts[1] - 1)
+            set(Calendar.YEAR, if (dateParts[2] < 100) 2000 + dateParts[2] else dateParts[2])
+        }
+
+        val compareDate = Calendar.getInstance().apply {
+            set(Calendar.DAY_OF_MONTH, compareParts[0])
+            set(Calendar.MONTH, compareParts[1] - 1)
+            set(Calendar.YEAR, if (compareParts[2] < 100) 2000 + compareParts[2] else compareParts[2])
+        }
+
+        return date.after(compareDate)
+    } catch (e: Exception) {
+        return false
+    }
 }
 
 @Composable
@@ -490,28 +534,28 @@ fun MigrationScreen(
 fun parseOldData(): List<ElectricityRecord> {
     val rawData = """
         14.10.23 - 223
-        15.11.23 - 917
-        16.12.23- 1875
-        15.01.24-2951
-        16.02.24-4028
-        14.03.24-4860
-        15.04.24-5674
-        15.05.24-61534
-        14.06.24-6403
-        16.07.24-6428
-        14.08.24-6444
-        16.09.24-6576
-        15.10.24-7027
-        15.11.24 - 7839
-        14.12.24-8818
-        15.01.25-9861
-        15.02.25-10861
-        14.03.25 - 11696
-        14.04.25 - 12418
-        16.05.25 - 12792
-        15.06.25 - 12953
-        15.07.25 - 12977
-        16.08.25 - 13006
+15.11.23 - 917
+16.12.23- 1875
+15.01.24-2951
+16.02.24-4028
+14.03.24-4860
+15.04.24-5674
+15.05.24-6153
+14.06.24-6403
+16.07.24-6428
+14.08.24-6444
+16.09.24-6576
+15.10.24-7027
+15.11.24 - 7839
+14.12.24-8818
+15.01.25-9861
+15.02.25-10861
+14.03.25 - 11696
+14.04.25 - 12418
+16.05.25 - 12792
+15.06.25 - 12953
+15.07.25 - 12977
+16.08.25 - 13006
     """.trimIndent()
 
     val records = mutableListOf<ElectricityRecord>()
@@ -520,18 +564,17 @@ fun parseOldData(): List<ElectricityRecord> {
 
     for (line in lines) {
         try {
-            // Простой парсинг - ищем дату и показания
             val cleanLine = line.replace("-", " ").replace("  ", " ")
             val parts = cleanLine.split(" ").filter { it.isNotEmpty() }
 
             if (parts.size >= 2) {
                 val dateStr = parts[0]
                 val currentReading = parts[1].toDouble()
-
                 val consumption = if (previousReading > 0) currentReading - previousReading else 0.0
 
-                // Временная стоимость (будет пересчитана в recalculateCosts)
-                val cost = 0.0
+                // Определяем тариф по дате
+                val tariff = if (isDateAfter(dateStr, "14.10.24")) 5.0 else 4.0
+                val cost = consumption * tariff
 
                 records.add(
                     ElectricityRecord(
@@ -545,7 +588,6 @@ fun parseOldData(): List<ElectricityRecord> {
                 )
 
                 previousReading = currentReading
-                println("Добавлена запись: $dateStr - $currentReading кВт*ч")
             }
         } catch (e: Exception) {
             println("Ошибка парсинга строки: '$line' - ${e.message}")
@@ -553,6 +595,5 @@ fun parseOldData(): List<ElectricityRecord> {
         }
     }
 
-    println("Мигрировано записей: ${records.size}")
     return records
 }
