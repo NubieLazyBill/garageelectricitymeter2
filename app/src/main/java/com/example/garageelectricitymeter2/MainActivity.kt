@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -25,10 +27,73 @@ import java.text.SimpleDateFormat
 import java.util.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import androidx.compose.ui.text.font.FontWeight
+import com.github.mikephil.charting.charts.LineChart
+import com.github.mikephil.charting.components.XAxis
+import com.github.mikephil.charting.data.Entry
+import com.github.mikephil.charting.data.LineData
+import com.github.mikephil.charting.data.LineDataSet
+import com.github.mikephil.charting.formatter.ValueFormatter
+import androidx.compose.ui.viewinterop.AndroidView
+
+@Composable
+fun ConsumptionLineChart(chartData: List<ChartData>) {
+    val entries = remember(chartData) {
+        chartData.mapIndexed { index, data ->
+            Entry(index.toFloat(), data.consumption.toFloat())
+        }
+    }
+
+    AndroidView(
+        factory = { context ->
+            LineChart(context).apply {
+                description.isEnabled = false
+                setTouchEnabled(true)
+                isDragEnabled = true
+                setScaleEnabled(true)
+                setPinchZoom(true)
+
+                xAxis.position = XAxis.XAxisPosition.BOTTOM
+                xAxis.valueFormatter = object : ValueFormatter() {
+                    override fun getFormattedValue(value: Float): String {
+                        val index = value.toInt()
+                        return if (index in chartData.indices) {
+                            "${chartData[index].month.take(3)} ${chartData[index].year}"
+                        } else {
+                            ""
+                        }
+                    }
+                }
+
+                axisRight.isEnabled = false
+            }
+        },
+        update = { chart ->
+            val dataSet = LineDataSet(entries, "Потребление электроэнергии (кВт·ч)").apply {
+                color = android.graphics.Color.BLUE
+                valueTextColor = android.graphics.Color.BLACK
+                lineWidth = 2f
+                setCircleColor(android.graphics.Color.RED)
+                circleRadius = 4f
+                setDrawCircleHole(false)
+                valueTextSize = 10f
+            }
+
+            chart.data = LineData(dataSet)
+            chart.invalidate() // refresh
+        }
+    )
+}
+
+
+enum class AppScreen {
+    MAIN,
+    CHART
+}
 
 class MainActivity : ComponentActivity() {
     private val viewModel: ElectricityViewModel by viewModels {
-        ElectricityViewModelFactory((applicationContext))
+        ElectricityViewModelFactory(applicationContext)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -40,29 +105,14 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val migrationCompleted by viewModel.migrationCompleted.collectAsState(initial = false)
-                    val coroutineScope = rememberCoroutineScope()
+                    var currentScreen by remember { mutableStateOf(AppScreen.MAIN) }
 
                     if (migrationCompleted) {
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            ElectricityMeterApp(viewModel = viewModel)
-
-                            /*/ ВРЕМЕННАЯ кнопка для сброса миграции (удалить после использования)
-                            Button(
-                                onClick = {
-                                    coroutineScope.launch {
-                                        viewModel.resetMigration()
-                                    }
-                                },
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(8.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.error
-                                )
-                            ) {
-                                Text("Сбросить миграцию")
-                            }*/
-                        }
+                        AppNavigation(
+                            currentScreen = currentScreen,
+                            onScreenChange = { screen -> currentScreen = screen },
+                            viewModel = viewModel
+                        )
                     } else {
                         MigrationScreen(
                             viewModel = viewModel,
@@ -71,6 +121,28 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun AppNavigation(
+    currentScreen: AppScreen,
+    onScreenChange: (AppScreen) -> Unit,
+    viewModel: ElectricityViewModel
+) {
+    when (currentScreen) {
+        AppScreen.MAIN -> {
+            ElectricityMeterApp(
+                viewModel = viewModel,
+                onShowChart = { onScreenChange(AppScreen.CHART) }
+            )
+        }
+        AppScreen.CHART -> {
+            ConsumptionChartScreen(
+                viewModel = viewModel,
+                onBack = { onScreenChange(AppScreen.MAIN) }
+            )
         }
     }
 }
@@ -232,11 +304,14 @@ class ElectricityViewModel(context: Context) : ViewModel() {
 
 
 @Composable
-fun ElectricityMeterApp(viewModel: ElectricityViewModel) {
+fun ElectricityMeterApp(
+    viewModel: ElectricityViewModel,
+    onShowChart: () -> Unit
+) {
     var currentReading by remember { mutableStateOf("") }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var recordToDelete by remember { mutableStateOf<ElectricityRecord?>(null) }
-    val tariff = 5.0 // текущий тариф
+    val tariff = 5.0
     val coroutineScope = rememberCoroutineScope()
 
     Column(
@@ -245,6 +320,18 @@ fun ElectricityMeterApp(viewModel: ElectricityViewModel) {
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            TextButton(
+                onClick = onShowChart,
+                modifier = Modifier.padding(8.dp)
+            ) {
+                Text("📊 График")
+            }
+        }
+
         Text(
             text = "Счётчик электроэнергии",
             style = MaterialTheme.typography.headlineMedium,
@@ -380,6 +467,186 @@ fun ElectricityMeterApp(viewModel: ElectricityViewModel) {
 }
 
 @Composable
+fun ChartDataItem(data: ChartData, maxConsumption: Double) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        elevation = CardDefaults.cardElevation(4.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp)
+        ) {
+            Text(
+                text = "${data.month} ${data.year}",
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Визуализация потребления
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Потребление:",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = "${"%.2f".format(data.consumption)} кВт·ч",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            // Визуализация стоимости
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Стоимость:",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    text = "${"%.2f".format(data.cost)} руб.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            // Простая визуализация в виде полосы
+            LinearProgressIndicator(
+                progress = (data.consumption / maxConsumption).toFloat().coerceIn(0f, 1f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(12.dp)
+                    .padding(top = 8.dp),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+            )
+
+            // Подпись под прогресс-баром
+            Text(
+                text = "Относительное потребление",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.align(Alignment.End)
+            )
+        }
+    }
+}
+
+// Вспомогательная функция для получения максимального потребления
+private fun getMaxConsumption(chartData: List<ChartData>): Double {
+    return chartData.maxOfOrNull { it.consumption } ?: 1.0
+}
+
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ConsumptionChartScreen(
+    viewModel: ElectricityViewModel,
+    onBack: () -> Unit
+) {
+    val records = viewModel.records
+    val chartData = remember { prepareChartData(records) }
+    val totalConsumption = remember { chartData.sumOf { it.consumption } }
+    val totalCost = remember { chartData.sumOf { it.cost } }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("График потребления") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Filled.ArrowBack, contentDescription = "Назад")
+                    }
+                }
+            )
+        }
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .padding(innerPadding)
+                .fillMaxSize()
+        ) {
+            if (chartData.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("Недостаточно данных для построения графика")
+                }
+            } else {
+                // Общая статистика
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    elevation = CardDefaults.cardElevation(8.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Text(
+                            text = "Общая статистика",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        Text(
+                            text = "Всего потреблено: ${"%.2f".format(totalConsumption)} кВт·ч",
+                            style = MaterialTheme.typography.bodyLarge
+                        )
+
+                        Text(
+                            text = "Общая стоимость: ${"%.2f".format(totalCost)} руб.",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+
+                // График
+                Text(
+                    text = "График потребления по месяцам:",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+
+                ConsumptionLineChart(chartData = chartData)
+
+                // Список данных по месяцам (можно прокручивать)
+                Text(
+                    text = "Детализация по месяцам:",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(horizontal = 16.dp)
+                ) {
+                    items(chartData) { data ->
+                        ChartDataItem(data = data, maxConsumption = getMaxConsumption(chartData))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun RecordCard(record: ElectricityRecord, onDelete: () -> Unit) {
     // Определяем тариф для этой записи
     val tariff = if (record.date == "15.10.24" || isDateAfter(record.date, "15.10.24")) {
@@ -387,6 +654,9 @@ fun RecordCard(record: ElectricityRecord, onDelete: () -> Unit) {
     } else {
         4.0
     }
+
+    // Проверяем, является ли это первой записью (нулевое предыдущее показание)
+    val isFirstRecord = record.previousReading == 0.0
 
     Card(
         modifier = Modifier.fillMaxWidth()
@@ -402,32 +672,43 @@ fun RecordCard(record: ElectricityRecord, onDelete: () -> Unit) {
                 text = "Показания: ${"%.1f".format(record.previousReading)} → ${"%.1f".format(record.currentReading)}",
                 style = MaterialTheme.typography.bodyMedium
             )
-            Text(
-                text = "Расход: ${"%.2f".format(record.consumption)} кВт*ч",
-                style = MaterialTheme.typography.bodyMedium
-            )
-            Text(
-                text = "Тариф: ${"%.0f".format(tariff)} руб./кВт*ч",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.secondary
-            )
-            Text(
-                text = "Стоимость: ${"%.2f".format(record.cost)} руб.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
+
+            if (isFirstRecord) {
+                Text(
+                    text = "Начальные показания счетчика",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+            } else {
+                Text(
+                    text = "Расход: ${"%.2f".format(record.consumption)} кВт*ч",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    text = "Тариф: ${"%.0f".format(tariff)} руб./кВт*ч",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+                Text(
+                    text = "Стоимость: ${"%.2f".format(record.cost)} руб.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Кнопка удаления
-            Button(
-                onClick = onDelete,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.error
-                ),
-                modifier = Modifier.align(Alignment.End)
-            ) {
-                Text("Удалить")
+            // Кнопка удаления (скрываем для первой записи)
+            if (!isFirstRecord) {
+                Button(
+                    onClick = onDelete,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    ),
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("Удалить")
+                }
             }
         }
     }
@@ -435,26 +716,30 @@ fun RecordCard(record: ElectricityRecord, onDelete: () -> Unit) {
 
 // Добавим вспомогательную функцию для сравнения дат (вне composable)
 // Замените существующую функцию на эту улучшенную версию
+// Замените существующую функцию на эту
 private fun isDateAfter(dateStr: String, compareDateStr: String): Boolean {
     try {
-        val dateParts = dateStr.split(".").map { it.toInt() }
-        val compareParts = compareDateStr.split(".").map { it.toInt() }
+        // Берем только дату (без времени если есть)
+        val cleanDateStr = dateStr.split(" ")[0]
+        val cleanCompareDateStr = compareDateStr.split(" ")[0]
 
-        // Создаем Calendar объекты для сравнения
-        val date = Calendar.getInstance().apply {
-            set(Calendar.DAY_OF_MONTH, dateParts[0])
-            set(Calendar.MONTH, dateParts[1] - 1)
-            set(Calendar.YEAR, if (dateParts[2] < 100) 2000 + dateParts[2] else dateParts[2])
+        val dateParts = cleanDateStr.split(".").map { it.toInt() }
+        val compareParts = cleanCompareDateStr.split(".").map { it.toInt() }
+
+        // Корректируем год (23 -> 2023)
+        val dateYear = if (dateParts[2] < 100) 2000 + dateParts[2] else dateParts[2]
+        val compareYear = if (compareParts[2] < 100) 2000 + compareParts[2] else compareParts[2]
+
+        // Сравниваем даты
+        return when {
+            dateYear > compareYear -> true
+            dateYear < compareYear -> false
+            dateParts[1] > compareParts[1] -> true
+            dateParts[1] < compareParts[1] -> false
+            else -> dateParts[0] > compareParts[0]
         }
-
-        val compareDate = Calendar.getInstance().apply {
-            set(Calendar.DAY_OF_MONTH, compareParts[0])
-            set(Calendar.MONTH, compareParts[1] - 1)
-            set(Calendar.YEAR, if (compareParts[2] < 100) 2000 + compareParts[2] else compareParts[2])
-        }
-
-        return date.after(compareDate)
     } catch (e: Exception) {
+        println("Ошибка сравнения дат: $dateStr и $compareDateStr - ${e.message}")
         return false
     }
 }
@@ -534,28 +819,8 @@ fun MigrationScreen(
 fun parseOldData(): List<ElectricityRecord> {
     val rawData = """
         14.10.23 - 223
-15.11.23 - 917
-16.12.23- 1875
-15.01.24-2951
-16.02.24-4028
-14.03.24-4860
-15.04.24-5674
-15.05.24-6153
-14.06.24-6403
-16.07.24-6428
-14.08.24-6444
-16.09.24-6576
-15.10.24-7027
-15.11.24 - 7839
-14.12.24-8818
-15.01.25-9861
-15.02.25-10861
-14.03.25 - 11696
-14.04.25 - 12418
-16.05.25 - 12792
-15.06.25 - 12953
-15.07.25 - 12977
-16.08.25 - 13006
+        15.11.23 - 917
+        // ... остальные данные
     """.trimIndent()
 
     val records = mutableListOf<ElectricityRecord>()
@@ -564,13 +829,16 @@ fun parseOldData(): List<ElectricityRecord> {
 
     for (line in lines) {
         try {
-            val cleanLine = line.replace("-", " ").replace("  ", " ")
+            val cleanLine = line.replace("-", " ").replace("  ", " ").trim()
             val parts = cleanLine.split(" ").filter { it.isNotEmpty() }
 
             if (parts.size >= 2) {
                 val dateStr = parts[0]
                 val currentReading = parts[1].toDouble()
                 val consumption = if (previousReading > 0) currentReading - previousReading else 0.0
+
+                // Добавляем год для полноты даты
+                val fullDateStr = if (dateStr.length == 8) dateStr else dateStr
 
                 // Определяем тариф по дате
                 val tariff = if (isDateAfter(dateStr, "14.10.24")) 5.0 else 4.0
@@ -579,7 +847,7 @@ fun parseOldData(): List<ElectricityRecord> {
                 records.add(
                     ElectricityRecord(
                         id = UUID.randomUUID().toString(),
-                        date = dateStr,
+                        date = fullDateStr,
                         previousReading = previousReading,
                         currentReading = currentReading,
                         consumption = consumption,

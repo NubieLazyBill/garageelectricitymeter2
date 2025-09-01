@@ -8,6 +8,73 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
+
+data class ChartData(
+    val month: String,
+    val year: String,
+    val consumption: Double,
+    val cost: Double
+)
+
+fun prepareChartData(records: List<ElectricityRecord>): List<ChartData> {
+    val monthlyData = mutableMapOf<String, MutableList<ElectricityRecord>>()
+
+    // Группируем записи по месяцам
+    records.filter { it.previousReading > 0 }
+        .forEach { record ->
+            try {
+                // Используем правильный формат даты (с учетом времени)
+                val datePart = record.date.split(" ")[0] // Берем только дату без времени
+                val parts = datePart.split(".").map { it.toInt() }
+
+                if (parts.size >= 3) {
+                    val day = parts[0]
+                    val month = parts[1]
+                    val year = parts[2]
+                    val key = "$year-${month.toString().padStart(2, '0')}"
+
+                    monthlyData.getOrPut(key) { mutableListOf() }.add(record)
+                }
+            } catch (e: Exception) {
+                // Пропускаем некорректные записи
+                println("Ошибка обработки даты: ${record.date} - ${e.message}")
+            }
+        }
+
+    return monthlyData.map { (key, monthRecords) ->
+        val totalConsumption = monthRecords.sumOf { it.consumption }
+        val totalCost = monthRecords.sumOf { it.cost }
+
+        val year = key.split("-")[0].toInt()
+        val month = key.split("-")[1].toInt()
+
+        ChartData(
+            month = getMonthName(month),
+            year = year.toString(),
+            consumption = totalConsumption,
+            cost = totalCost
+        )
+    }.sortedBy { "${it.year}-${it.month}" } // Правильная сортировка
+}
+
+// Функция для получения названия месяца
+fun getMonthName(month: Int): String {
+    return when (month) {
+        1 -> "Январь"
+        2 -> "Февраль"
+        3 -> "Март"
+        4 -> "Апрель"
+        5 -> "Май"
+        6 -> "Июнь"
+        7 -> "Июль"
+        8 -> "Август"
+        9 -> "Сентябрь"
+        10 -> "Октябрь"
+        11 -> "Ноябрь"
+        12 -> "Декабрь"
+        else -> "Неизвестно"
+    }
+}
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "electricity_data")
 
 class DataStoreManager(private val context: Context) {

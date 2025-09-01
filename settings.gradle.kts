@@ -12,13 +12,12 @@ pluginManagement {
     }
 }
 dependencyResolutionManagement {
-    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
         mavenCentral()
+        maven { url = uri("https://jitpack.io") } // Исправлено: используем uri() вместо строки
     }
 }
 
-rootProject.name = "garageelectricitymeter"
+rootProject.name = "garageelectricitymeter2"
 include(":app")
- 
