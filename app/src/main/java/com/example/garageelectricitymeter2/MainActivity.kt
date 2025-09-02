@@ -472,16 +472,6 @@ fun ElectricityMeterApp(
                 Text("📤 Экспорт")
             }
 
-            // Кнопка теста уведомления
-            TextButton(
-                onClick = {
-                    showTestNotification(context)
-                },
-                modifier = Modifier.padding(4.dp)
-            ) {
-                Text("🔔 Тест")
-            }
-
             TextButton(
                 onClick = onShowChart,
                 modifier = Modifier.padding(4.dp)
