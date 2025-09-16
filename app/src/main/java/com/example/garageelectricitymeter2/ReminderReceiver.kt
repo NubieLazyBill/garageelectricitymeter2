@@ -1,22 +1,17 @@
 package com.example.garageelectricitymeter2
 
-import android.app.AlarmManager
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
+import android.app.*
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import androidx.core.app.AlarmManagerCompat
 import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
 import java.util.Calendar
-
 
 class ReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         showNotification(context)
-        // Переустанавливаем напоминание на следующий месяц
         setupNextMonthlyReminder(context)
     }
 
@@ -24,30 +19,30 @@ class ReminderReceiver : BroadcastReceiver() {
         createNotificationChannel(context)
 
         val notification = NotificationCompat.Builder(context, "electricity_reminder_channel")
-            .setSmallIcon(android.R.drawable.ic_lock_lock) // 🔒
-            .setSmallIcon(android.R.drawable.ic_dialog_info) // 💡
-            .setSmallIcon(android.R.drawable.ic_menu_help) // ❓
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("💡 Напоминание об оплате")
             .setContentText("Не забудьте оплатить электроэнергию за этот месяц!")
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setAutoCancel(true)
             .build()
 
-        NotificationManagerCompat.from(context).notify(1, notification)
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.notify(1, notification)
     }
 
     private fun createNotificationChannel(context: Context) {
-        // Проверяем, не создан ли уже канал
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (notificationManager.getNotificationChannel("electricity_reminder_channel") == null) {
-            val channel = NotificationChannel(
-                "electricity_reminder_channel",
-                "Напоминания об оплате",
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "Напоминания об оплате электроэнергии"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (notificationManager.getNotificationChannel("electricity_reminder_channel") == null) {
+                val channel = NotificationChannel(
+                    "electricity_reminder_channel",
+                    "Напоминания об оплате",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = "Напоминания об оплате электроэнергии"
+                }
+                notificationManager.createNotificationChannel(channel)
             }
-            notificationManager.createNotificationChannel(channel)
         }
     }
 
@@ -62,16 +57,11 @@ class ReminderReceiver : BroadcastReceiver() {
         )
 
         val calendar = Calendar.getInstance().apply {
-            add(Calendar.MONTH, 1) // Следующий месяц
+            add(Calendar.MONTH, 1)
             set(Calendar.DAY_OF_MONTH, 14)
             set(Calendar.HOUR_OF_DAY, 12)
             set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0)
-
-            // Если время уже прошло сегодня, добавляем месяц
-            if (timeInMillis < System.currentTimeMillis()) {
-                add(Calendar.MONTH, 1)
-            }
         }
 
         AlarmManagerCompat.setExactAndAllowWhileIdle(

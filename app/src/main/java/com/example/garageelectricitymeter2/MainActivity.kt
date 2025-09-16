@@ -63,17 +63,19 @@ import java.io.File
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.graphics.Color
-import android.os.Build
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import android.os.Build
+import androidx.compose.runtime.LaunchedEffect
+import com.example.garageelectricitymeter2.*
 
 // Функция для преобразования даты в сортируемый формат (год-месяц)
 private fun getSortableDate(month: String, year: String): String {
-    val monthNumber = when (month.toLowerCase()) {
+    val monthNumber = when (month.lowercase()) { // ЗАМЕНИТЕ toLowerCase() на lowercase()
         "январь", "jan" -> "01"
         "февраль", "feb" -> "02"
         "март", "mar" -> "03"
@@ -308,7 +310,7 @@ class ElectricityViewModel(context: Context) : ViewModel() {
 
     private fun loadData() {
         viewModelScope.launch {
-            // Загружаем предыдущие показания
+            // Загружаем предыдущие показания из DataStore
             dataStoreManager.previousReading.collect { reading ->
                 previousReading = reading
             }
@@ -324,7 +326,14 @@ class ElectricityViewModel(context: Context) : ViewModel() {
                 val recordsWithRecalculatedCost = recalculateCostsForRecords(loadedRecords)
                 _records.addAll(recordsWithRecalculatedCost)
 
-                println("Загружено записей: ${_records.size}")
+                // Устанавливаем previousReading как currentReading последней записи
+                if (_records.isNotEmpty()) {
+                    previousReading = _records.last().currentReading
+                    // Сохраняем правильное значение в DataStore
+                    dataStoreManager.savePreviousReading(previousReading)
+                }
+
+                println("Загружено записей: ${_records.size}, previousReading: $previousReading")
             } catch (e: Exception) {
                 println("Ошибка загрузки записей: ${e.message}")
             }
@@ -354,17 +363,25 @@ class ElectricityViewModel(context: Context) : ViewModel() {
     }
 
     suspend fun addRecord(record: ElectricityRecord) {
+        // Проверяем, что currentReading больше previousReading
+        if (record.currentReading <= previousReading) {
+            throw IllegalArgumentException("Текущие показания должны быть больше предыдущих")
+        }
+
         // Определяем тариф для новой записи
         val tariff = if (isDateAfter(record.date, "14.10.24")) 5.0 else 4.0
         val recordWithCorrectCost = record.copy(cost = record.consumption * tariff)
 
-        _records.add(recordWithCorrectCost)
+        // Добавляем в НАЧАЛО списка (новые записи сверху)
+        _records.add(0, recordWithCorrectCost)
         previousReading = recordWithCorrectCost.currentReading
 
         // Сохраняем в DataStore
         dataStoreManager.saveRecord(recordWithCorrectCost, _records.size - 1)
         dataStoreManager.saveRecordsCount(_records.size)
         dataStoreManager.savePreviousReading(previousReading)
+
+        println("Добавлена запись. Новый previousReading: $previousReading")
     }
 
     // Остальные методы остаются без изменений...
@@ -398,32 +415,37 @@ class ElectricityViewModel(context: Context) : ViewModel() {
         _records.addAll(recordsWithCost)
         if (recordsWithCost.isNotEmpty()) {
             previousReading = recordsWithCost.last().currentReading
+            // Сохраняем правильное previousReading
+            dataStoreManager.savePreviousReading(previousReading)
         }
 
-        println("Миграция завершена успешно!")
+        println("Миграция завершена успешно! previousReading: $previousReading")
     }
 
     // Вспомогательная функция для сравнения дат
     private fun isDateAfter(dateStr: String, compareDateStr: String): Boolean {
         try {
-            val dateParts = dateStr.split(".").map { it.toInt() }
-            val compareParts = compareDateStr.split(".").map { it.toInt() }
+            // Берем только дату (без времени если есть)
+            val cleanDateStr = dateStr.split(" ")[0]
+            val cleanCompareDateStr = compareDateStr.split(" ")[0]
 
-            // Форматируем даты для сравнения (день.месяц.год)
-            val date = Calendar.getInstance().apply {
-                set(Calendar.DAY_OF_MONTH, dateParts[0])
-                set(Calendar.MONTH, dateParts[1] - 1)
-                set(Calendar.YEAR, if (dateParts[2] < 100) 2000 + dateParts[2] else dateParts[2])
+            val dateParts = cleanDateStr.split(".").map { it.toInt() }
+            val compareParts = cleanCompareDateStr.split(".").map { it.toInt() }
+
+            // Корректируем год (23 -> 2023)
+            val dateYear = if (dateParts[2] < 100) 2000 + dateParts[2] else dateParts[2]
+            val compareYear = if (compareParts[2] < 100) 2000 + compareParts[2] else compareParts[2]
+
+            // Сравниваем даты
+            return when {
+                dateYear > compareYear -> true
+                dateYear < compareYear -> false
+                dateParts[1] > compareParts[1] -> true
+                dateParts[1] < compareParts[1] -> false
+                else -> dateParts[0] > compareParts[0]
             }
-
-            val compareDate = Calendar.getInstance().apply {
-                set(Calendar.DAY_OF_MONTH, compareParts[0])
-                set(Calendar.MONTH, compareParts[1] - 1)
-                set(Calendar.YEAR, if (compareParts[2] < 100) 2000 + compareParts[2] else compareParts[2])
-            }
-
-            return date.after(compareDate)
         } catch (e: Exception) {
+            println("Ошибка сравнения дат: $dateStr и $compareDateStr - ${e.message}")
             return false
         }
     }
@@ -464,12 +486,18 @@ fun ElectricityMeterApp(
         ) {
             // Кнопка экспорта данных
             TextButton(
-                onClick = {
-                    showExportDialog = true // Показываем диалог экспорта
-                },
+                onClick = { showExportDialog = true },
                 modifier = Modifier.padding(4.dp)
             ) {
                 Text("📤 Экспорт")
+            }
+
+            // Кнопка теста уведомления - ДОБАВЬТЕ ЭТУ КНОПКУ
+            TextButton(
+                onClick = { showTestNotification(context) },
+                modifier = Modifier.padding(4.dp)
+            ) {
+                Text("🔔 Тест")
             }
 
             TextButton(
@@ -481,9 +509,7 @@ fun ElectricityMeterApp(
 
             // Кнопка импорта данных
             TextButton(
-                onClick = {
-                    showImportDialog = true // Показываем диалог импорта
-                },
+                onClick = { showImportDialog = true },
                 modifier = Modifier.padding(4.dp)
             ) {
                 Text("📥 Импорт")
@@ -638,12 +664,16 @@ fun ElectricityMeterApp(
                     .weight(1f),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(viewModel.records.sortedByDescending {
-                    // Сортируем по дате (новые сверху)
+                items(viewModel.records.sortedByDescending { record ->
                     try {
-                        val dateParts = it.date.split(".").map { part -> part.toInt() }
-                        // Создаем сортируемую дату в формате ГГГГММДД
+                        // Берем только дату без времени
+                        val dateOnly = record.date.split(" ")[0]
+                        val dateParts = dateOnly.split(".").map { it.toInt() }
+
+                        // Корректируем год
                         val year = if (dateParts[2] < 100) 2000 + dateParts[2] else dateParts[2]
+
+                        // Создаем сортируемое значение (ГГГГММДД)
                         year * 10000 + dateParts[1] * 100 + dateParts[0]
                     } catch (e: Exception) {
                         0
@@ -844,13 +874,13 @@ private fun parseBackupFile(content: String): List<ElectricityRecord> {
 private fun exportDataToFile(context: Context, records: List<ElectricityRecord>) {
     try {
         val content = buildString {
-            appendln("# Формат: дата - показания")
-            appendln("# Пример: 14.10.23 - 223")
-            appendln()
+            appendLine("# Формат: дата - показания") // ЗАМЕНИТЕ appendln
+            appendLine("# Пример: 14.10.23 - 223")   // ЗАМЕНИТЕ appendln
+            appendLine()                             // ЗАМЕНИТЕ appendln
 
             records.sortedBy { it.date }.forEach { record ->
-                val datePart = record.date.split(" ")[0] // Берем только дату без времени
-                appendln("$datePart - ${record.currentReading.toInt()}")
+                val datePart = record.date.split(" ")[0]
+                appendLine("$datePart - ${record.currentReading.toInt()}") // ЗАМЕНИТЕ appendln
             }
         }
 
@@ -903,13 +933,14 @@ private fun ShowTextExportDialog(context: Context, records: List<ElectricityReco
             title = { Text("Данные для копирования") },
             text = {
                 val content = buildString {
-                    appendln("# Backup данных электросчетчика")
-                    appendln("# Формат: дата - показания")
-                    appendln("# Пример: 14.10.23 - 223")
-                    appendln()
+                    appendLine("# Backup данных электросчетчика") // ЗАМЕНИТЕ
+                    appendLine("# Формат: дата - показания")      // ЗАМЕНИТЕ
+                    appendLine("# Пример: 14.10.23 - 223")        // ЗАМЕНИТЕ
+                    appendLine()                                  // ЗАМЕНИТЕ
+
                     records.sortedBy { it.date }.forEach { record ->
                         val datePart = record.date.split(" ")[0]
-                        appendln("$datePart - ${record.currentReading.toInt()}")
+                        appendLine("$datePart - ${record.currentReading.toInt()}") // ЗАМЕНИТЕ
                     }
                 }
                 Text(content)
@@ -1181,11 +1212,7 @@ fun ConsumptionChartScreen(
 @Composable
 fun RecordCard(record: ElectricityRecord, onDelete: () -> Unit) {
     // Определяем тариф для этой записи
-    val tariff = if (record.date == "15.10.24" || isDateAfter(record.date, "15.10.24")) {
-        5.0
-    } else {
-        4.0
-    }
+    val tariff = if (isDateAfter(record.date.split(" ")[0], "14.10.24")) 5.0 else 4.0
 
     // Проверяем, является ли это первой записью (нулевое предыдущее показание)
     val isFirstRecord = record.previousReading == 0.0
@@ -1350,7 +1377,7 @@ fun MigrationScreen(
 // Функция для парсинга ваших старых данных
 fun parseOldData(): List<ElectricityRecord> {
     val rawData = """
-        14.10.23 - 223
+14.10.23 - 223
 15.11.23 - 917
 16.12.23- 1875
 15.01.24-2951
@@ -1373,6 +1400,7 @@ fun parseOldData(): List<ElectricityRecord> {
 15.06.25 - 12953
 15.07.25 - 12977
 16.08.25 - 13006
+15.09.25 - 13038
         
     """.trimIndent()
 
@@ -1424,7 +1452,6 @@ fun parseOldData(): List<ElectricityRecord> {
 fun SettingsScreen(onBack: () -> Unit) {
     var reminderEnabled by remember { mutableStateOf(true) }
     var reminderDay by remember { mutableStateOf(14) }
-    var reminderTime by remember { mutableStateOf("12:00") }
 
     Scaffold(
         topBar = {
