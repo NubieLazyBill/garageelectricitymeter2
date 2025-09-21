@@ -78,6 +78,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import androidx.core.app.ActivityCompat
+import android.provider.Settings
 
 // Функция для преобразования даты в сортируемый формат (год-месяц)
 private fun getSortableDate(month: String, year: String): String {
@@ -223,7 +224,37 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
     private fun setupMonthlyReminder() {
+        // Проверяем разрешение на Android 12+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
+            if (!alarmManager.canScheduleExactAlarms()) {
+                // Запрашиваем разрешение через системные настройки
+                val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
+                startActivity(intent)
+                return // Выходим, разрешение запрошено
+            }
+        }
+
+        // Если разрешение есть или Android < 12, устанавливаем напоминание
+        setAlarm()
+    }
+
+    override fun onResume() {
+        super.onResume()
+
+        // Проверяем, вернулся ли пользователь из системных настроек
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
+            if (alarmManager.canScheduleExactAlarms()) {
+                // Пользователь выдал разрешение - устанавливаем будильник
+                setAlarm()
+            }
+        }
+    }
+
+    private fun setAlarm() {
         val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
         val intent = Intent(this, ReminderReceiver::class.java)
         val pendingIntent = PendingIntent.getBroadcast(
@@ -232,24 +263,32 @@ class MainActivity : ComponentActivity() {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+
         val calendar = Calendar.getInstance().apply {
             set(Calendar.DAY_OF_MONTH, 14)
             set(Calendar.HOUR_OF_DAY, 12)
             set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0)
 
-            // Если сегодня уже прошло 14 число, ставим на следующий месяц
             if (get(Calendar.DAY_OF_MONTH) > 14) {
                 add(Calendar.MONTH, 1)
             }
         }
 
-        AlarmManagerCompat.setExactAndAllowWhileIdle(
-            alarmManager,
-            AlarmManager.RTC_WAKEUP,
-            calendar.timeInMillis,
-            pendingIntent
-        )
+        // Используем не точный алерт для обхода ограничений
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            alarmManager.setAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                calendar.timeInMillis,
+                pendingIntent
+            )
+        } else {
+            alarmManager.set(
+                AlarmManager.RTC_WAKEUP,
+                calendar.timeInMillis,
+                pendingIntent
+            )
+        }
     }
 
     override fun onRequestPermissionsResult(
