@@ -71,7 +71,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import android.os.Build
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.unit.sp
 import com.example.garageelectricitymeter2.*
+import android.os.Environment
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import androidx.core.app.ActivityCompat
 
 // Функция для преобразования даты в сортируемый формат (год-месяц)
 private fun getSortableDate(month: String, year: String): String {
@@ -244,6 +250,35 @@ class MainActivity : ComponentActivity() {
             calendar.timeInMillis,
             pendingIntent
         )
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+
+        when (requestCode) {
+            1001 -> { // WRITE_EXTERNAL_STORAGE
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    // Повторяем экспорт после получения разрешения
+                    val viewModel: ElectricityViewModel by viewModels()
+                    exportDataToFile(this, viewModel.records)
+                } else {
+                    Toast.makeText(this, "Разрешение на запись отклонено", Toast.LENGTH_SHORT).show()
+                }
+            }
+            1002 -> { // READ_EXTERNAL_STORAGE
+                if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    // Повторяем импорт после получения разрешения
+                    val viewModel: ElectricityViewModel by viewModels()
+                    importDataFromFile(this, viewModel)
+                } else {
+                    Toast.makeText(this, "Разрешение на чтение отклонено", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     }
 }
 
@@ -481,38 +516,61 @@ fun ElectricityMeterApp(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp), // Уменьшаем вертикальные отступы
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
             // Кнопка экспорта данных
             TextButton(
                 onClick = { showExportDialog = true },
-                modifier = Modifier.padding(4.dp)
+                modifier = Modifier
+                    .padding(2.dp) // Уменьшаем отступы
+                    .weight(1f) // Равномерно распределяем пространство
             ) {
-                Text("📤 Экспорт")
+                Text(
+                    "📤 Экспорт",
+                    fontSize = 12.sp // Уменьшаем размер текста
+                )
             }
 
-            // Кнопка теста уведомления - ДОБАВЬТЕ ЭТУ КНОПКУ
+            // Кнопка теста уведомления
             TextButton(
                 onClick = { showTestNotification(context) },
-                modifier = Modifier.padding(4.dp)
+                modifier = Modifier
+                    .padding(2.dp)
+                    .weight(1f)
             ) {
-                Text("🔔 Тест")
+                Text(
+                    "🔔",
+                    fontSize = 12.sp
+                )
             }
 
             TextButton(
                 onClick = onShowChart,
-                modifier = Modifier.padding(4.dp)
+                modifier = Modifier
+                    .padding(2.dp)
+                    .weight(1f)
             ) {
-                Text("📊 График")
+                Text(
+                    "📊 График",
+                    fontSize = 12.sp
+                )
             }
 
             // Кнопка импорта данных
             TextButton(
                 onClick = { showImportDialog = true },
-                modifier = Modifier.padding(4.dp)
+                modifier = Modifier
+                    .padding(2.dp)
+                    .weight(1f)
             ) {
-                Text("📥 Импорт")
+                Text(
+                    "📥 Импорт",
+                    fontSize = 12.sp
+                )
             }
         }
 
@@ -873,23 +931,40 @@ private fun parseBackupFile(content: String): List<ElectricityRecord> {
 // Функция экспорта данных в файл
 private fun exportDataToFile(context: Context, records: List<ElectricityRecord>) {
     try {
+        // Проверяем разрешение на запись
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            != PackageManager.PERMISSION_GRANTED) {
+            // Запрашиваем разрешение если нужно
+            ActivityCompat.requestPermissions(
+                context as ComponentActivity,
+                arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                1001
+            )
+            return
+        }
+
         val content = buildString {
-            appendLine("# Формат: дата - показания") // ЗАМЕНИТЕ appendln
-            appendLine("# Пример: 14.10.23 - 223")   // ЗАМЕНИТЕ appendln
-            appendLine()                             // ЗАМЕНИТЕ appendln
+            appendLine("# Формат: дата - показания")
+            appendLine("# Пример: 14.10.23 - 223")
+            appendLine()
 
             records.sortedBy { it.date }.forEach { record ->
                 val datePart = record.date.split(" ")[0]
-                appendLine("$datePart - ${record.currentReading.toInt()}") // ЗАМЕНИТЕ appendln
+                appendLine("$datePart - ${record.currentReading.toInt()}")
             }
         }
 
-        // Сохраняем во внешнее хранилище
-        val file = File(context.getExternalFilesDir(null), "electricity_backup.txt")
+        // Сохраняем в ПУБЛИЧНУЮ папку Загрузки
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val file = File(downloadsDir, "electricity_backup.txt")
+
         file.writeText(content)
 
-        // Показываем уведомление об успехе
-        Toast.makeText(context, "Данные экспортированы в: ${file.absolutePath}", Toast.LENGTH_LONG).show()
+        Toast.makeText(
+            context,
+            "Данные экспортированы в:\n${file.absolutePath}",
+            Toast.LENGTH_LONG
+        ).show()
 
     } catch (e: Exception) {
         Toast.makeText(context, "Ошибка экспорта: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -899,9 +974,23 @@ private fun exportDataToFile(context: Context, records: List<ElectricityRecord>)
 // Функция импорта данных из файла
 private fun importDataFromFile(context: Context, viewModel: ElectricityViewModel) {
     try {
-        val file = File(context.getExternalFilesDir(null), "electricity_backup.txt")
+        // Проверяем разрешение на чтение
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE)
+            != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(
+                context as ComponentActivity,
+                arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE),
+                1002
+            )
+            return
+        }
+
+        // Ищем файл в ПУБЛИЧНОЙ папке Загрузки
+        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val file = File(downloadsDir, "electricity_backup.txt")
+
         if (!file.exists()) {
-            Toast.makeText(context, "Файл backup.txt не найден", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Файл backup.txt не найден в папке Загрузки", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -909,7 +998,6 @@ private fun importDataFromFile(context: Context, viewModel: ElectricityViewModel
         val records = parseBackupFile(content)
 
         if (records.isNotEmpty()) {
-            // Запускаем миграцию
             CoroutineScope(Dispatchers.Main).launch {
                 viewModel.migrateOldData(records)
                 Toast.makeText(context, "Импортировано ${records.size} записей", Toast.LENGTH_LONG).show()
