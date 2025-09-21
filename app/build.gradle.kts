@@ -10,9 +10,9 @@ android {
     defaultConfig {
         applicationId = "com.example.garageelectricitymeter2"
         minSdk = 24
-        targetSdk = 34
-        versionCode = 2
-        versionName = "2.0"
+        targetSdk = 33 // МЕНЯЕМ с 34 на 33!
+        versionCode = 3
+        versionName = "3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -58,7 +58,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2") // Добавьте эту строку
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.6.2")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
@@ -70,6 +70,9 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     implementation("androidx.datastore:datastore-preferences:1.0.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0") // Добавь эту строку
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
     implementation("com.github.PhilJay:MPAndroidChart:v3.1.0")
+
+    // ДОБАВЛЯЕМ для работы с внешним хранилищем на Android 14
+    implementation("androidx.appcompat:appcompat:1.6.1")
 }

@@ -931,18 +931,6 @@ private fun parseBackupFile(content: String): List<ElectricityRecord> {
 // Функция экспорта данных в файл
 private fun exportDataToFile(context: Context, records: List<ElectricityRecord>) {
     try {
-        // Проверяем разрешение на запись
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            != PackageManager.PERMISSION_GRANTED) {
-            // Запрашиваем разрешение если нужно
-            ActivityCompat.requestPermissions(
-                context as ComponentActivity,
-                arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
-                1001
-            )
-            return
-        }
-
         val content = buildString {
             appendLine("# Формат: дата - показания")
             appendLine("# Пример: 14.10.23 - 223")
@@ -954,8 +942,8 @@ private fun exportDataToFile(context: Context, records: List<ElectricityRecord>)
             }
         }
 
-        // Сохраняем в ПУБЛИЧНУЮ папку Загрузки
-        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        // Сохраняем в публичную папку Downloads
+        val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
         val file = File(downloadsDir, "electricity_backup.txt")
 
         file.writeText(content)
@@ -971,26 +959,14 @@ private fun exportDataToFile(context: Context, records: List<ElectricityRecord>)
     }
 }
 
-// Функция импорта данных из файла
 private fun importDataFromFile(context: Context, viewModel: ElectricityViewModel) {
     try {
-        // Проверяем разрешение на чтение
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE)
-            != PackageManager.PERMISSION_GRANTED) {
-            ActivityCompat.requestPermissions(
-                context as ComponentActivity,
-                arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE),
-                1002
-            )
-            return
-        }
-
-        // Ищем файл в ПУБЛИЧНОЙ папке Загрузки
-        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        // Ищем файл в папке Downloads приложения
+        val downloadsDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
         val file = File(downloadsDir, "electricity_backup.txt")
 
         if (!file.exists()) {
-            Toast.makeText(context, "Файл backup.txt не найден в папке Загрузки", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Файл backup.txt не найден", Toast.LENGTH_SHORT).show()
             return
         }
 
